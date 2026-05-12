@@ -1,0 +1,77 @@
+// Card encoding
+// =============
+// Cards are encoded as integers 0..51 carried on the wire as uint32.
+// Layout: card = suit * 13 + rank
+//   rank ∈ [0..12]  →  2, 3, 4, 5, 6, 7, 8, 9, 10, J, Q, K, A
+//   suit ∈ [0..3]   →  ♣ (Clubs), ♦ (Diamonds), ♥ (Hearts), ♠ (Spades)
+// Examples:
+//   0  = 2♣,  12 = A♣
+//   13 = 2♦,  25 = A♦
+//   26 = 2♥,  38 = A♥
+//   39 = 2♠,  51 = A♠
+// The sentinel value 255 means "no card" (see CardConstants.Sentinel.NO_CARD).
+// Never use float/double for money — all monetary values are int64 in cents.
+
+syntax = "proto3";
+
+package poker.v1;
+
+option go_package = "github.com/pacepoker/poker/gen/go/poker/v1;pokerv1";
+
+// BettingStructure describes how bet sizing is constrained at a table.
+enum BettingStructure {
+  BETTING_STRUCTURE_UNSPECIFIED = 0;
+  BETTING_STRUCTURE_NO_LIMIT    = 1;
+  BETTING_STRUCTURE_POT_LIMIT   = 2;
+  BETTING_STRUCTURE_FIXED_LIMIT = 3;
+  BETTING_STRUCTURE_SPREAD_LIMIT = 4;
+}
+
+// GameVariant identifies the poker variant being played.
+enum GameVariant {
+  GAME_VARIANT_UNSPECIFIED    = 0;
+  GAME_VARIANT_TEXAS_HOLDEM   = 1;
+  GAME_VARIANT_OMAHA          = 2;
+  GAME_VARIANT_OMAHA_HI_LO   = 3;
+  GAME_VARIANT_SEVEN_CARD_STUD = 4;
+}
+
+// GameStatus represents the lifecycle state of a table.
+enum GameStatus {
+  GAME_STATUS_UNSPECIFIED = 0;
+  GAME_STATUS_WAITING     = 1;
+  GAME_STATUS_ACTIVE      = 2;
+  GAME_STATUS_PAUSED      = 3;
+  GAME_STATUS_FINISHED    = 4;
+  GAME_STATUS_CLOSED      = 5;
+}
+
+// HandPhase represents the current street within a hand.
+enum HandPhase {
+  HAND_PHASE_UNSPECIFIED = 0;
+  HAND_PHASE_PREFLOP     = 1;
+  HAND_PHASE_FLOP        = 2;
+  HAND_PHASE_TURN        = 3;
+  HAND_PHASE_RIVER       = 4;
+  HAND_PHASE_SHOWDOWN    = 5;
+  HAND_PHASE_HAND_OVER   = 6;
+}
+
+// SeatStatus describes a seat's occupancy state.
+enum SeatStatus {
+  SEAT_STATUS_UNSPECIFIED   = 0;
+  SEAT_STATUS_EMPTY         = 1;
+  SEAT_STATUS_RESERVED      = 2;
+  SEAT_STATUS_OCCUPIED      = 3;
+  SEAT_STATUS_SITTING_OUT   = 4;
+  SEAT_STATUS_DISCONNECTED  = 5;
+}
+
+// CardConstants provides named constants for the card encoding scheme.
+// Use CardConstants.Sentinel.NO_CARD (255) wherever a card slot is empty.
+message CardConstants {
+  enum Sentinel {
+    SENTINEL_UNSPECIFIED = 0;
+    SENTINEL_NO_CARD     = 255;
+  }
+}

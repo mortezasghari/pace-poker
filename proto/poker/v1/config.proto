@@ -1,0 +1,132 @@
+syntax = "proto3";
+
+package poker.v1;
+
+import "google/protobuf/duration.proto";
+import "poker/v1/common.proto";
+
+option go_package = "github.com/pacepoker/poker/gen/go/poker/v1;pokerv1";
+
+// CashGameConfig is the immutable configuration for a cash-game table.
+// Set once at table creation; changing config requires closing and reopening.
+message CashGameConfig {
+  // ── Identity ──────────────────────────────────────────────────────────────
+
+  // Human-readable name displayed in the lobby.
+  string table_name = 1;
+
+  // Poker variant (Hold'em, Omaha, …).
+  GameVariant variant = 2;
+
+  // Betting structure (No-Limit, Pot-Limit, …).
+  BettingStructure structure = 3;
+
+  // ISO 4217 currency code, e.g. "USD", "EUR".
+  string currency = 4;
+
+  // ── Seats ────────────────────────────────────────────────────────────────
+
+  // Total seats at the table (typically 2–10).
+  int32 max_seats = 5;
+
+  // Minimum number of seated, non-sitting-out players required to start a hand.
+  int32 min_players_to_start = 6;
+
+  // ── Stakes (all amounts in smallest chip unit — cents) ───────────────────
+
+  int64 small_blind = 7;
+  int64 big_blind   = 8;
+
+  // Per-hand ante posted by every player before cards are dealt. 0 = disabled.
+  int64 ante = 9;
+
+  // Big-blind ante: posted by the BB position only (modern tournament style,
+  // sometimes adopted by cash rooms). 0 = disabled.
+  int64 bb_ante = 10;
+
+  // Optional live straddle amount (typically 2× BB). 0 = no straddle.
+  int64 straddle_amount = 11;
+
+  // ── Fixed-Limit specific ─────────────────────────────────────────────────
+
+  // Small bet (preflop + flop). Used only when structure = FIXED_LIMIT.
+  int64 small_bet = 12;
+
+  // Big bet (turn + river). Used only when structure = FIXED_LIMIT.
+  int64 big_bet = 13;
+
+  // Maximum number of raises allowed per street (typically 4). 0 = uncapped.
+  int32 max_raises_per_street = 14;
+
+  // When true, raises are uncapped in heads-up play even if a cap is set.
+  bool uncap_heads_up = 15;
+
+  // ── Buy-in ───────────────────────────────────────────────────────────────
+
+  // Minimum chips a player must bring to the table.
+  int64 min_buy_in = 16;
+
+  // Maximum chips allowed at the table. 0 = uncapped.
+  int64 max_buy_in = 17;
+
+  bool allow_rebuy  = 18;
+  bool allow_top_up = 19;
+
+  // Automatically rebuy when stack falls below this amount. 0 = disabled.
+  int64 auto_rebuy_threshold = 20;
+
+  // Amount to rebuy to when auto-rebuy triggers.
+  int64 auto_rebuy_amount = 21;
+
+  // ── Rake ─────────────────────────────────────────────────────────────────
+
+  // Rake percentage in basis points (100 bps = 1%). E.g. 500 = 5%.
+  int32 rake_bps = 22;
+
+  // Maximum rake taken per hand in cents. 0 = uncapped.
+  int64 rake_cap = 23;
+
+  // When true, no rake is taken if the hand ends before the flop.
+  bool no_flop_no_drop = 24;
+
+  // ── Timing ───────────────────────────────────────────────────────────────
+
+  // How long a player has to act before timing out.
+  google.protobuf.Duration action_timeout = 25;
+
+  // Time-bank seconds granted when a player sits down.
+  google.protobuf.Duration time_bank_initial = 26;
+
+  // Additional seconds added to the time bank each hand (up to some max).
+  google.protobuf.Duration time_bank_increment = 27;
+
+  // Pause between hands (shuffle, post blinds, etc.).
+  google.protobuf.Duration hand_start_delay = 28;
+
+  // How long a seat reservation is held before it expires.
+  google.protobuf.Duration seat_reservation_timeout = 29;
+
+  // ── House rules ───────────────────────────────────────────────────────────
+
+  // Automatically muck losing hands at showdown without revealing them.
+  bool auto_muck_losing_hands = 30;
+
+  // Allow players to agree to run remaining board cards twice when all-in.
+  bool allow_run_it_twice = 31;
+
+  bool allow_chat       = 32;
+
+  // Show a folded player's cards to the table at showdown.
+  bool show_folded_cards = 33;
+
+  bool allow_straddle    = 34;
+  bool allow_seat_change = 35;
+
+  // When true, a new player must post a BB (or wait) before receiving cards.
+  bool require_post_for_new_player = 36;
+
+  // ── Access ────────────────────────────────────────────────────────────────
+
+  bool   is_private = 37;
+  string password   = 38;
+}

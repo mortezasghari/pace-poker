@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package poker.v1;
+
+import "poker/v1/commands.proto";
+import "poker/v1/events.proto";
+import "poker/v1/state.proto";
+
+option go_package = "github.com/pacepoker/poker/gen/go/poker/v1;pokerv1";
+
+service PokerService {
+  // ── Lobby / table management ─────────────────────────────────────────────
+  // Discrete unary RPCs allow per-method auth and rate limiting.
+
+  rpc CreateTable(CreateTableCommand)                     returns (CreateTableResponse);
+  rpc ReserveSeat(ReserveSeatCommand)                     returns (ReserveSeatResponse);
+  rpc CancelSeatReservation(CancelSeatReservationCommand) returns (CancelSeatReservationResponse);
+  rpc JoinTable(JoinTableCommand)                         returns (JoinTableResponse);
+  rpc LeaveTable(LeaveTableCommand)                       returns (LeaveTableResponse);
+  rpc JoinWaitingList(JoinWaitingListCommand)             returns (JoinWaitingListResponse);
+  rpc LeaveWaitingList(LeaveWaitingListCommand)           returns (LeaveWaitingListResponse);
+  rpc ChangeSeat(ChangeSeatCommand)                       returns (ChangeSeatResponse);
+  rpc TopUp(TopUpCommand)                                 returns (TopUpResponse);
+  rpc EnableAutoRebuy(EnableAutoRebuyCommand)             returns (EnableAutoRebuyResponse);
+  rpc CashOut(CashOutCommand)                             returns (CashOutResponse);
+  rpc SearchTables(SearchTablesRequest)                   returns (SearchTablesResponse);
+
+  // ── Admin ────────────────────────────────────────────────────────────────
+
+  rpc PauseTable(PauseTableCommand)   returns (PauseTableResponse);
+  rpc ResumeTable(ResumeTableCommand) returns (ResumeTableResponse);
+  rpc CloseTable(CloseTableCommand)   returns (CloseTableResponse);
+  rpc KickPlayer(KickPlayerCommand)   returns (KickPlayerResponse);
+  rpc MutePlayer(MutePlayerCommand)   returns (MutePlayerResponse);
+
+  // ── Gameplay session ─────────────────────────────────────────────────────
+  // Bidirectional stream. Client sends PlayerCommands, server streams GameEvents.
+  // To reconnect/resume, send a ResumeCommand as the first message; the server
+  // will replay events from the given sequence number onward.
+  rpc PlaySession(stream PlayerCommand) returns (stream GameEvent);
+
+  // ── Spectator / replay ───────────────────────────────────────────────────
+  // Read-only event stream for spectators and deterministic replay.
+  rpc StreamGameEvents(StreamGameEventsRequest) returns (stream GameEvent);
+
+  // ── State snapshot ────────────────────────────────────────────────────────
+  // Returns the current state snapshot; use when reconnecting without a
+  // sequence number to re-anchor before subscribing to StreamGameEvents.
+  rpc GetGameState(GetGameStateRequest) returns (GetGameStateResponse);
+}
+
+message StreamGameEventsRequest {
+  string game_id       = 1;
+  // Replay from this sequence number (inclusive). 0 = from the beginning.
+  uint64 from_sequence = 2;
+}
+
+message GetGameStateRequest {
+  string game_id = 1;
+}
+
+message GetGameStateResponse {
+  GameState state           = 1;
+  uint64    latest_sequence = 2;
+}

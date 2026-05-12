@@ -1,0 +1,146 @@
+syntax = "proto3";
+
+package poker.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "poker/v1/common.proto";
+import "poker/v1/config.proto";
+
+option go_package = "github.com/pacepoker/poker/gen/go/poker/v1;pokerv1";
+
+// PlayerState is the per-seat view of a player at the table.
+message PlayerState {
+  // Fields 1–15 are reserved for the most frequently accessed data.
+
+  string     player_id  = 1;
+  int32      seat       = 2;
+  SeatStatus seat_status = 3;
+
+  // Current chip stack in cents.
+  int64 stack = 4;
+
+  // Chips the player has put in during this betting round.
+  int64 current_bet = 5;
+
+  // Total chips committed across all streets in this hand.
+  int64 total_committed_this_hand = 6;
+
+  bool is_folded     = 7;
+  bool is_all_in     = 8;
+  bool is_sitting_out = 9;
+
+  // Remaining time-bank seconds.
+  google.protobuf.Duration time_bank_remaining = 10;
+
+  // When true, the player must post a blind before being dealt cards.
+  bool must_post_blind = 11;
+
+  // Set when the player is currently disconnected; cleared on reconnect.
+  optional google.protobuf.Timestamp disconnected_at = 12;
+
+  // Hole cards — presence is meaningful (absent = not yet dealt or mucked).
+  optional uint32 hole_card_1 = 13;
+  optional uint32 hole_card_2 = 14;
+}
+
+// SidePot is a separate pot created when one or more players are all-in.
+message SidePot {
+  // Amount in this side pot (cents).
+  int64 amount = 1;
+
+  // Players who are eligible to win this pot.
+  repeated string eligible_player_ids = 2;
+}
+
+// HandState holds all mutable data for the hand currently in progress.
+message HandState {
+  // Fields 1–15 reserved for hot fields.
+
+  string hand_id            = 1;
+  string dealer_player_id   = 2;
+  string small_blind_player_id = 3;
+  string big_blind_player_id  = 4;
+
+  // Total pot in cents (sum of all contributions, before rake).
+  int64 pot = 5;
+
+  // Rake already taken from the pot in cents.
+  int64 rake_taken = 6;
+
+  HandPhase phase = 7;
+
+  // Highest bet any player has made this street.
+  int64 current_highest_bet = 8;
+
+  // The size of the last raise (used for minimum-raise calculation).
+  int64 last_raise_amount = 9;
+
+  // Minimum legal raise amount this street.
+  int64 min_raise_amount = 10;
+
+  // Number of raises made this street (for fixed-limit cap enforcement).
+  int32 raises_this_street = 11;
+
+  // Player whose turn it is; absent between streets.
+  optional string acting_player_id = 12;
+
+  // Absolute deadline by which the acting player must act.
+  google.protobuf.Timestamp action_deadline = 13;
+
+  // Board cards — presence is meaningful (absent = not yet dealt).
+  optional uint32 flop_card_1 = 14;
+  optional uint32 flop_card_2 = 15;
+  optional uint32 flop_card_3 = 16;
+  optional uint32 turn_card   = 17;
+  optional uint32 river_card  = 18;
+
+  // Run-it-twice second board. Length 0 (not applicable), 1 (river only),
+  // or 2 (turn + river). Cards present only after the second board is dealt.
+  repeated uint32 second_board = 19;
+
+  repeated SidePot side_pots = 20;
+
+  // Legal actions available to the acting player (e.g. "fold", "check", "bet").
+  repeated string pending_actions = 21;
+
+  // Order in which players will act this street (player_ids).
+  repeated string action_order = 22;
+
+  google.protobuf.Timestamp started_at = 23;
+}
+
+// GameState is the authoritative snapshot of a table at a given version.
+message GameState {
+  // Fields 1–15 reserved for hot fields.
+
+  string     game_id = 1;
+  GameStatus status  = 2;
+
+  // Monotonically increasing version counter. Increments on every state change.
+  // Used for optimistic concurrency: commands carrying a stale version are rejected.
+  int64 version = 3;
+
+  CashGameConfig config = 4;
+
+  // Index (0-based) of the dealer seat.
+  int32 dealer_seat = 5;
+
+  // How many complete hands have been played at this table.
+  int64 hand_number = 6;
+
+  // Active hand; not set between hands.
+  HandState current_hand = 7;
+
+  // All players indexed by player_id.
+  map<string, PlayerState> players = 8;
+
+  // Maps player_id → external user_id for cross-service lookups.
+  map<string, string> player_user_ids = 9;
+
+  // Seats currently held by reservation (seat numbers).
+  repeated int32 reserved_seats = 10;
+
+  // Players waiting for a seat, in queue order (player_ids).
+  repeated string waiting_list = 11;
+}

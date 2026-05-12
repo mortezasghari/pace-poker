@@ -1,0 +1,440 @@
+syntax = "proto3";
+
+package poker.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "poker/v1/common.proto";
+import "poker/v1/config.proto";
+
+option go_package = "github.com/pacepoker/poker/gen/go/poker/v1;pokerv1";
+
+// GameEvent is the top-level event envelope streamed to all table participants.
+// Every state change in the system is represented as a GameEvent.
+// Events are facts — they record what happened, not what was requested.
+message GameEvent {
+  // Fields 1–15 reserved for hot fields present on every event.
+
+  string game_id  = 1;
+
+  // Monotonically increasing per-game sequence number.
+  // Clients use this to detect gaps and request replay via StreamGameEvents.
+  uint64 sequence = 2;
+
+  google.protobuf.Timestamp occurred_at = 3;
+
+  // The command_id that caused this event. Empty for server-initiated events
+  // (e.g. timeout, auto-rebuy, dealing cards).
+  string caused_by_command_id = 4;
+
+  // The GameState.version after this event was applied.
+  // Clients can compare this with their local version to verify ordering.
+  int64 state_version = 5;
+
+  oneof event {
+    // ── Table lifecycle ────────────────────────────────────────────────────
+    TableCreated             table_created              = 16;
+    TableClosed              table_closed               = 17;
+    TablePaused              table_paused               = 18;
+    TableResumed             table_resumed              = 19;
+
+    // ── Seat / player lifecycle ────────────────────────────────────────────
+    SeatReserved             seat_reserved              = 20;
+    SeatReservationCancelled seat_reservation_cancelled = 21;
+    PlayerJoined             player_joined              = 22;
+    PlayerLeft               player_left                = 23;
+    PlayerSatOut             player_sat_out             = 24;
+    PlayerSatIn              player_sat_in              = 25;
+    PlayerDisconnected       player_disconnected        = 26;
+    PlayerReconnected        player_reconnected         = 27;
+    PlayerKicked             player_kicked              = 28;
+    WaitingListJoined        waiting_list_joined        = 29;
+    WaitingListLeft          waiting_list_left          = 30;
+    SeatChanged              seat_changed               = 31;
+    StackToppedUp            stack_topped_up            = 32;
+    AutoRebuyTriggered       auto_rebuy_triggered       = 33;
+
+    // ── Hand lifecycle ─────────────────────────────────────────────────────
+    HandStarted              hand_started               = 34;
+    BlindPosted              blind_posted               = 35;
+    AntePosted               ante_posted                = 36;
+    StraddlePosted           straddle_posted            = 37;
+    HoleCardsDealt           hole_cards_dealt           = 38;
+    HoleCardsRevealed        hole_cards_revealed        = 39;
+    FlopDealt                flop_dealt                 = 40;
+    TurnDealt                turn_dealt                 = 41;
+    RiverDealt               river_dealt                = 42;
+    RunItTwiceAgreed         run_it_twice_agreed        = 43;
+    SecondBoardDealt         second_board_dealt         = 44;
+
+    // ── Player actions (past-tense facts) ─────────────────────────────────
+    PlayerFolded             player_folded              = 45;
+    PlayerChecked            player_checked             = 46;
+    PlayerCalled             player_called              = 47;
+    PlayerBet                player_bet                 = 48;
+    PlayerRaised             player_raised              = 49;
+    PlayerAllIn              player_all_in              = 50;
+    PlayerShowedCards        player_showed_cards        = 51;
+    PlayerMuckedCards        player_mucked_cards        = 52;
+
+    // ── Timing ────────────────────────────────────────────────────────────
+    ActionStarted            action_started             = 53;
+    TimeBankUsed             time_bank_used             = 54;
+    PlayerTimedOut           player_timed_out           = 55;
+
+    // ── Pot and showdown ──────────────────────────────────────────────────
+    BettingRoundEnded        betting_round_ended        = 56;
+    SidePotCreated           side_pot_created           = 57;
+    Showdown                 showdown                   = 58;
+    PotAwarded               pot_awarded                = 59;
+    RakeTaken                rake_taken                 = 60;
+    HandEnded                hand_ended                 = 61;
+
+    // ── Money flow (cash game) ─────────────────────────────────────────────
+    BuyInRequested           buy_in_requested           = 62;
+    BuyInCompleted           buy_in_completed           = 63;
+    BuyInFailed              buy_in_failed              = 64;
+    CashOutRequested         cash_out_requested         = 65;
+    CashOutCompleted         cash_out_completed         = 66;
+
+    // ── Chat / moderation ─────────────────────────────────────────────────
+    ChatMessageSent          chat_message_sent          = 67;
+    PlayerChatMuted          player_chat_muted          = 68;
+    PlayerEmoteSent          player_emote_sent          = 69;
+
+    // ── Command outcome ────────────────────────────────────────────────────
+    CommandRejected          command_rejected           = 70;
+    CommandAccepted          command_accepted           = 71;
+  }
+}
+
+// ── Table lifecycle ──────────────────────────────────────────────────────────
+
+message TableCreated {
+  CashGameConfig config = 1;
+}
+
+message TableClosed {
+  string reason = 1;
+}
+
+message TablePaused {
+  string reason = 1;
+}
+
+message TableResumed {}
+
+// ── Seat / player lifecycle ──────────────────────────────────────────────────
+
+message SeatReserved {
+  string    player_id  = 1;
+  int32     seat       = 2;
+  // Reservation expires at this time if not confirmed by a JoinTable command.
+  google.protobuf.Timestamp expires_at = 3;
+}
+
+// Emitted when a seat reservation is released — by timeout, explicit cancel,
+// or a superseding event (e.g. the player joined directly).
+message SeatReservationCancelled {
+  string player_id = 1;
+  int32  seat      = 2;
+  string reason    = 3;
+}
+
+message PlayerJoined {
+  string player_id = 1;
+  string user_id   = 2;
+  int32  seat      = 3;
+  int64  buy_in    = 4;
+}
+
+message PlayerLeft {
+  string player_id       = 1;
+  int64  cash_out_amount = 2;
+  string reason          = 3;
+}
+
+message PlayerSatOut {
+  string player_id = 1;
+}
+
+message PlayerSatIn {
+  string player_id = 1;
+}
+
+message PlayerDisconnected {
+  string player_id = 1;
+}
+
+message PlayerReconnected {
+  string player_id = 1;
+}
+
+message PlayerKicked {
+  string player_id = 1;
+  string reason    = 2;
+}
+
+message WaitingListJoined {
+  string player_id = 1;
+  // Position in the waiting list (1-based).
+  int32  position  = 2;
+}
+
+message WaitingListLeft {
+  string player_id = 1;
+}
+
+message SeatChanged {
+  string player_id = 1;
+  int32  from_seat = 2;
+  int32  to_seat   = 3;
+}
+
+message StackToppedUp {
+  string player_id  = 1;
+  int64  amount     = 2;
+  int64  new_stack  = 3;
+}
+
+message AutoRebuyTriggered {
+  string player_id = 1;
+  int64  amount    = 2;
+  int64  new_stack = 3;
+}
+
+// ── Hand lifecycle ───────────────────────────────────────────────────────────
+
+message HandStarted {
+  string hand_id           = 1;
+  int64  hand_number       = 2;
+  string dealer_player_id  = 3;
+  string sb_player_id      = 4;
+  string bb_player_id      = 5;
+  int64  small_blind       = 6;
+  int64  big_blind         = 7;
+}
+
+message BlindPosted {
+  string player_id     = 1;
+  int64  amount        = 2;
+  bool   is_small_blind = 3;
+  bool   is_big_blind   = 4;
+  // A dead blind does not count toward the current bet (e.g. missed blind post).
+  bool   is_dead_blind  = 5;
+}
+
+message AntePosted {
+  string player_id = 1;
+  int64  amount    = 2;
+}
+
+message StraddlePosted {
+  string player_id = 1;
+  int64  amount    = 2;
+}
+
+// Broadcast to all players when hole cards are dealt; cards are omitted.
+// Each player receives a separate HoleCardsRevealed event via their private stream.
+message HoleCardsDealt {
+  string player_id = 1;
+}
+
+// Sent only to the player identified by player_id (private/filtered stream).
+message HoleCardsRevealed {
+  string player_id = 1;
+  uint32 card_1    = 2;
+  uint32 card_2    = 3;
+}
+
+message FlopDealt {
+  uint32 card_1 = 1;
+  uint32 card_2 = 2;
+  uint32 card_3 = 3;
+}
+
+message TurnDealt {
+  uint32 card = 1;
+}
+
+message RiverDealt {
+  uint32 card = 1;
+}
+
+message RunItTwiceAgreed {
+  repeated string player_ids = 1;
+}
+
+// The second board is dealt only for the remaining streets when run-it-twice
+// is agreed and players are all-in before the river.
+message SecondBoardDealt {
+  // Absent if the turn was already dealt before the all-in.
+  uint32 turn_card  = 1;
+  uint32 river_card = 2;
+}
+
+// ── Player actions ───────────────────────────────────────────────────────────
+
+message PlayerFolded {
+  string player_id = 1;
+}
+
+message PlayerChecked {
+  string player_id = 1;
+}
+
+message PlayerCalled {
+  string player_id = 1;
+  // Actual amount called (may be less than current bet if player is all-in).
+  int64  amount    = 2;
+}
+
+message PlayerBet {
+  string player_id = 1;
+  int64  amount    = 2;
+}
+
+message PlayerRaised {
+  string player_id = 1;
+  // Total bet amount after the raise (absolute, not the increment).
+  int64  to        = 2;
+  // The raise increment over the previous bet.
+  int64  raise_by  = 3;
+}
+
+message PlayerAllIn {
+  string player_id = 1;
+  // Total amount the player put in to go all-in.
+  int64  amount    = 2;
+}
+
+message PlayerShowedCards {
+  string player_id = 1;
+  uint32 card_1    = 2;
+  uint32 card_2    = 3;
+}
+
+message PlayerMuckedCards {
+  string player_id = 1;
+}
+
+// ── Timing ───────────────────────────────────────────────────────────────────
+
+// Emitted at the start of each player's action window.
+message ActionStarted {
+  string player_id   = 1;
+  google.protobuf.Duration  time_to_act = 2;
+  google.protobuf.Timestamp deadline    = 3;
+}
+
+message TimeBankUsed {
+  string player_id          = 1;
+  google.protobuf.Duration seconds_used        = 2;
+  google.protobuf.Duration time_bank_remaining = 3;
+}
+
+// Emitted when a player's clock expires. Followed immediately by the
+// default action event (e.g. PlayerFolded or PlayerChecked).
+message PlayerTimedOut {
+  string player_id     = 1;
+  // The action taken automatically ("fold", "check", etc.).
+  string default_action = 2;
+}
+
+// ── Pot and showdown ─────────────────────────────────────────────────────────
+
+message BettingRoundEnded {
+  HandPhase phase     = 1;
+  int64     pot_total = 2;
+}
+
+message SidePotCreated {
+  int64           amount               = 1;
+  repeated string eligible_player_ids  = 2;
+}
+
+// Lists the order in which players must show their hands.
+message Showdown {
+  repeated string player_ids_in_order = 1;
+}
+
+// One PotAwarded event is emitted per pot (main pot + each side pot).
+message PotAwarded {
+  int64           amount             = 1;
+  repeated string winner_player_ids  = 2;
+  // Exactly 5 bytes encoding the five cards of the winning hand (card encoding).
+  bytes           winning_hand       = 3;
+  // Human-readable description, e.g. "Full House, Aces full of Kings".
+  string          hand_description   = 4;
+}
+
+message RakeTaken {
+  int64 amount = 1;
+}
+
+message HandEnded {
+  int64                 hand_number          = 1;
+  // Net chip change per player this hand (positive = won, negative = lost).
+  map<string, int64>    net_change_by_player = 2;
+}
+
+// ── Money flow ───────────────────────────────────────────────────────────────
+
+message BuyInRequested {
+  string player_id = 1;
+  int64  amount    = 2;
+}
+
+message BuyInCompleted {
+  string player_id = 1;
+  int64  amount    = 2;
+}
+
+message BuyInFailed {
+  string player_id = 1;
+  string reason    = 2;
+}
+
+message CashOutRequested {
+  string player_id = 1;
+}
+
+message CashOutCompleted {
+  string player_id = 1;
+  int64  amount    = 2;
+}
+
+// ── Chat / moderation ────────────────────────────────────────────────────────
+
+message ChatMessageSent {
+  string player_id = 1;
+  string text      = 2;
+}
+
+message PlayerChatMuted {
+  string player_id = 1;
+  google.protobuf.Duration duration = 2;
+  string reason    = 3;
+}
+
+message PlayerEmoteSent {
+  string player_id = 1;
+  string emote_id  = 2;
+}
+
+// ── Command outcome ───────────────────────────────────────────────────────────
+
+// Emitted when a PlayerCommand is invalid or cannot be applied.
+// code is a short stable identifier for programmatic handling.
+message CommandRejected {
+  string command_id = 1;
+  string reason     = 2;
+  // Stable error codes: ILLEGAL_ACTION, NOT_YOUR_TURN, INSUFFICIENT_FUNDS,
+  // STALE_VERSION, UNIMPLEMENTED, RESUME_NOT_IMPLEMENTED, etc.
+  string code       = 3;
+}
+
+// Emitted only when a command succeeds but produces no other event.
+message CommandAccepted {
+  string command_id = 1;
+}

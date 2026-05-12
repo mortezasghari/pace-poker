@@ -1,0 +1,13 @@
+version: v2
+modules:
+  - path: proto
+lint:
+  use: [STANDARD]
+  except:
+    # service.proto intentionally uses *Command as RPC request types (domain language)
+    # and streams GameEvent from multiple RPCs (shared envelope type).
+    - RPC_REQUEST_STANDARD_NAME
+    - RPC_RESPONSE_STANDARD_NAME
+    - RPC_REQUEST_RESPONSE_UNIQUE
+breaking:
+  use: [FILE]

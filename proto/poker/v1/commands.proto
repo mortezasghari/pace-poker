@@ -1,0 +1,290 @@
+syntax = "proto3";
+
+package poker.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "poker/v1/common.proto";
+import "poker/v1/config.proto";
+import "poker/v1/state.proto";
+
+option go_package = "github.com/pacepoker/poker/gen/go/poker/v1;pokerv1";
+
+// PlayerCommand is the envelope sent by a client over the PlaySession bidi stream.
+// Commands are intent — they express what the player wants to do.
+// The server validates each command and emits events (facts) in response.
+message PlayerCommand {
+  // Client-generated UUID used as an idempotency key. The server ignores
+  // duplicate command_ids that have already been processed.
+  string command_id = 1;
+
+  string game_id = 2;
+
+  // The GameState.version the client believed was current when it sent this.
+  // The server rejects the command if the table has since advanced past a point
+  // where the client's assumption is no longer valid.
+  int64 client_state_version = 3;
+
+  oneof payload {
+    FoldCommand        fold          = 4;
+    CheckCommand       check         = 5;
+    CallCommand        call          = 6;
+    BetCommand         bet           = 7;
+    RaiseCommand       raise         = 8;
+    AllInCommand       all_in        = 9;
+    SitOutCommand      sit_out       = 10;
+    SitInCommand       sit_in        = 11;
+    ShowCardsCommand   show_cards    = 12;
+    MuckCardsCommand   muck_cards    = 13;
+    UseTimeBankCommand use_time_bank = 14;
+    ChatMessageCommand chat_message  = 15;
+    EmoteCommand       emote         = 16;
+    RunItTwiceCommand  run_it_twice  = 17;
+    // ResumeCommand must be the first command sent after reconnecting.
+    // The server replays events from from_sequence onward.
+    ResumeCommand      resume        = 18;
+  }
+}
+
+// ── In-game action commands ──────────────────────────────────────────────────
+
+message FoldCommand {}
+
+message CheckCommand {}
+
+message CallCommand {
+  // Optional — server derives the correct amount. Provided by client
+  // for display/confirmation purposes; server validates before applying.
+  int64 amount = 1;
+}
+
+message BetCommand {
+  int64 amount = 1;
+}
+
+message RaiseCommand {
+  // Total bet amount after the raise (absolute, not the increment).
+  int64 to = 1;
+}
+
+message AllInCommand {}
+
+message SitOutCommand {}
+
+message SitInCommand {}
+
+message ShowCardsCommand {}
+
+message MuckCardsCommand {}
+
+message UseTimeBankCommand {}
+
+message ChatMessageCommand {
+  string text = 1;
+}
+
+message EmoteCommand {
+  string emote_id = 1;
+}
+
+message RunItTwiceCommand {
+  bool agree = 1;
+}
+
+// ResumeCommand reconnects an existing session and requests a replay of all
+// events from from_sequence onward. Must be the first command in a new stream.
+message ResumeCommand {
+  uint64 from_sequence = 1;
+}
+
+// ── Lobby commands and responses ─────────────────────────────────────────────
+
+message CreateTableCommand {
+  CashGameConfig config     = 1;
+  // Client-generated UUID for idempotency. Empty = server generates one.
+  string         command_id = 2;
+}
+
+message CreateTableResponse {
+  GameState state = 1;
+}
+
+message ReserveSeatCommand {
+  string game_id    = 1;
+  int32  seat       = 2;
+  string command_id = 3;
+}
+
+message ReserveSeatResponse {
+  google.protobuf.Timestamp expires_at = 1;
+}
+
+message CancelSeatReservationCommand {
+  string game_id    = 1;
+  int32  seat       = 2;
+  string command_id = 3;
+}
+
+message CancelSeatReservationResponse {}
+
+message JoinTableCommand {
+  string game_id    = 1;
+  int32  seat       = 2;
+  int64  buy_in     = 3;
+  string command_id = 4;
+}
+
+message JoinTableResponse {
+  GameState state = 1;
+}
+
+message LeaveTableCommand {
+  string game_id    = 1;
+  string command_id = 2;
+}
+
+message LeaveTableResponse {
+  int64 cash_out_amount = 1;
+}
+
+message JoinWaitingListCommand {
+  string game_id    = 1;
+  string command_id = 2;
+}
+
+message JoinWaitingListResponse {
+  int32 position = 1;
+}
+
+message LeaveWaitingListCommand {
+  string game_id    = 1;
+  string command_id = 2;
+}
+
+message LeaveWaitingListResponse {}
+
+message ChangeSeatCommand {
+  string game_id    = 1;
+  int32  to_seat    = 2;
+  string command_id = 3;
+}
+
+message ChangeSeatResponse {}
+
+message TopUpCommand {
+  string game_id    = 1;
+  int64  amount     = 2;
+  string command_id = 3;
+}
+
+message TopUpResponse {
+  int64 new_stack = 1;
+}
+
+message EnableAutoRebuyCommand {
+  string game_id    = 1;
+  int64  threshold  = 2;
+  int64  amount     = 3;
+  string command_id = 4;
+}
+
+message EnableAutoRebuyResponse {}
+
+message CashOutCommand {
+  string game_id    = 1;
+  string command_id = 2;
+}
+
+message CashOutResponse {
+  int64 amount = 1;
+}
+
+// ── Admin commands and responses ─────────────────────────────────────────────
+
+message PauseTableCommand {
+  string game_id    = 1;
+  string reason     = 2;
+  string command_id = 3;
+}
+
+message PauseTableResponse {}
+
+message ResumeTableCommand {
+  string game_id    = 1;
+  string command_id = 2;
+}
+
+message ResumeTableResponse {}
+
+message CloseTableCommand {
+  string game_id    = 1;
+  string reason     = 2;
+  string command_id = 3;
+}
+
+message CloseTableResponse {}
+
+message KickPlayerCommand {
+  string game_id    = 1;
+  string player_id  = 2;
+  string reason     = 3;
+  string command_id = 4;
+}
+
+message KickPlayerResponse {}
+
+message MutePlayerCommand {
+  string game_id   = 1;
+  string player_id = 2;
+  google.protobuf.Duration duration  = 3;
+  string reason    = 4;
+  string command_id = 5;
+}
+
+message MutePlayerResponse {}
+
+// ── Lobby search ─────────────────────────────────────────────────────────────
+
+// SearchTablesRequest filters the lobby. All filters are optional and AND-combined.
+// Empty request returns all active tables, paginated.
+message SearchTablesRequest {
+  // Substring match on table name (case-insensitive). Empty = no name filter.
+  string name_query = 1;
+
+  // Exact big-blind filter. 0 = no filter.
+  // Players refer to stakes by big blind (a "$1 game" means BB=$1).
+  int64 big_blind = 2;
+
+  // Optional variant filter. UNSPECIFIED = any variant.
+  GameVariant variant = 3;
+
+  // Optional structure filter. UNSPECIFIED = any structure.
+  BettingStructure structure = 4;
+
+  // Pagination. Defaults: limit=50, offset=0. Hard cap on limit: 200.
+  int32 limit  = 5;
+  int32 offset = 6;
+}
+
+message SearchTablesResponse {
+  repeated TableSummary tables = 1;
+  // Total count matching the filters (before pagination). Useful for "page 1 of N".
+  int64 total_count = 2;
+}
+
+// TableSummary is the lobby projection of a table — enough to display in a list
+// without sending the full CashGameConfig over the wire.
+message TableSummary {
+  string           game_id     = 1;
+  string           table_name  = 2;
+  GameVariant      variant     = 3;
+  BettingStructure structure   = 4;
+  string           currency    = 5;
+  int64            small_blind = 6;
+  int64            big_blind   = 7;
+  int64            min_buy_in  = 8;
+  int64            max_buy_in  = 9;
+  int32            max_seats   = 10;
+  bool             is_private  = 11;
+  google.protobuf.Timestamp created_at = 12;
+}
