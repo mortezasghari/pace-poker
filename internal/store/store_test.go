@@ -295,6 +295,70 @@ func TestGetSnapshotAtOrBefore(t *testing.T) {
 	}
 }
 
+func TestCreateTable_PersistsConfig(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	state, err := testStore.CreateTable(ctx, makeConfig(), uuid.New())
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+
+	gameID, _ := uuid.Parse(state.GetGameId())
+	got, err := testStore.GetGameConfig(ctx, gameID)
+	if err != nil {
+		t.Fatalf("GetGameConfig after CreateTable: %v — game_configs row was not persisted", err)
+	}
+	if got.GetTableName() != makeConfig().GetTableName() {
+		t.Errorf("table_name: got %q, want %q", got.GetTableName(), makeConfig().GetTableName())
+	}
+	if got.GetBigBlind() != makeConfig().GetBigBlind() {
+		t.Errorf("big_blind: got %d, want %d", got.GetBigBlind(), makeConfig().GetBigBlind())
+	}
+}
+
+// TestCreateTable_AllOrNothing verifies that the config insert is rolled back
+// when the event append fails. The trick: we pre-commit a seq=1 blocker row
+// into game_events via a separate pool connection (game_events has no FK to
+// game_configs, so the uncommitted config does not block it). The in-tx
+// AppendEvent then hits the unique violation, WithTx rolls back, and the
+// config insert is undone.
+func TestCreateTable_AllOrNothing(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	var capturedGameID uuid.UUID
+	err := testStore.WithTx(ctx, func(tx Store) error {
+		gameID, err := tx.CreateGameConfig(ctx, makeConfig())
+		if err != nil {
+			return err
+		}
+		capturedGameID = gameID
+
+		// Pre-commit a seq=1 event on a separate connection so the in-tx
+		// AppendEvent below hits the unique (game_id, sequence) violation.
+		_, err = testPool.Exec(ctx,
+			`INSERT INTO game_events
+			 (game_id, sequence, event_type, payload, envelope, state_version_after, occurred_at)
+			 VALUES ($1, 1, 'test.Blocker', $2, $2, 1, NOW())`,
+			gameID, []byte{0})
+		if err != nil {
+			return err
+		}
+
+		return tx.AppendEvent(ctx, makeEvent(t, gameID.String(), 1, 1))
+	})
+
+	if !errors.Is(err, ErrConcurrentWrite) {
+		t.Fatalf("expected ErrConcurrentWrite, got: %v", err)
+	}
+
+	_, err = testStore.GetGameConfig(ctx, capturedGameID)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("config must not exist after rollback, got: %v", err)
+	}
+}
+
 func TestWithTxRollback(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()

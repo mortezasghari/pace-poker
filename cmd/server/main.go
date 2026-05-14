@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	pb "github.com/pacepoker/poker/gen/go/poker/v1"
+	"github.com/pacepoker/poker/internal/engine"
 	"github.com/pacepoker/poker/internal/server"
 	"github.com/pacepoker/poker/internal/store"
 	"google.golang.org/grpc"
@@ -35,6 +36,8 @@ func main() {
 	}
 
 	st := store.New(pool)
+	router := engine.NewRouter(ctx, st, engine.RouterOptions{})
+	defer router.Close()
 
 	lis, err := net.Listen("tcp", *addr)
 	if err != nil {
@@ -42,7 +45,7 @@ func main() {
 	}
 
 	grpcServer := grpc.NewServer()
-	pb.RegisterPokerServiceServer(grpcServer, server.New(st))
+	pb.RegisterPokerServiceServer(grpcServer, server.NewServer(st, router))
 
 	go func() {
 		log.Printf("pacepoker listening on %s", *addr)

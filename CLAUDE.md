@@ -140,3 +140,24 @@ query type always receives a sane value.
 **Validation boundary:** `validateCashGameConfig` in `internal/server/validate.go` is
 the sole place config rules live. The store accepts whatever the server passes — do not
 add business-rule checks inside pgStore methods.
+
+## Engine layer (actor pattern)
+
+The engine layer (`internal/engine`) implements game logic using the actor pattern:
+
+- **Session**: one per active game. Owns the game's `GameState`. A single goroutine
+  inside the Session is the only code that reads or writes the state. External
+  callers send commands via `Submit`, which posts to the Session's inbox channel.
+- **Router**: maps game IDs to Sessions. Lazy-loads sessions from the store
+  (snapshot + events) on first access. Evicts idle sessions to free memory.
+
+Rules for working in this package:
+
+1. NEVER add a mutex to `GameState`. If you find yourself wanting one, you're
+   touching state from outside the run goroutine — refactor instead.
+2. `handleCommand` and `applyEvents` are pure functions. They must not call the
+   store or do I/O. The Session orchestrates persistence around them.
+3. Persist events BEFORE applying them to in-memory state. A DB failure
+   must not leave in-memory state ahead of the persisted log.
+4. `Submit` is safe to call from many goroutines. The Session serializes them.
+   You should not need `sync.RWMutex`, `sync.Map`, or `sync/atomic` at this layer.

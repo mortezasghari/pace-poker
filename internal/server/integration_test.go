@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	pb "github.com/pacepoker/poker/gen/go/poker/v1"
+	"github.com/pacepoker/poker/internal/engine"
 	"github.com/pacepoker/poker/internal/server"
 	"github.com/pacepoker/poker/internal/store"
 	"github.com/pacepoker/poker/internal/testutil"
@@ -14,7 +15,10 @@ import (
 func newIntegrationServer(t *testing.T) *server.Server {
 	t.Helper()
 	pool := testutil.NewPostgresPool(t, "../../db/migrations")
-	return server.New(store.New(pool))
+	st := store.New(pool)
+	router := engine.NewRouter(context.Background(), st, engine.RouterOptions{})
+	t.Cleanup(router.Close)
+	return server.NewServer(st, router)
 }
 
 func validCfg() *pb.CashGameConfig {

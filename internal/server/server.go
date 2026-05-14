@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	pb "github.com/pacepoker/poker/gen/go/poker/v1"
+	"github.com/pacepoker/poker/internal/engine"
 	"github.com/pacepoker/poker/internal/store"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -14,12 +15,13 @@ import (
 // Server implements pb.PokerServiceServer.
 type Server struct {
 	pb.UnimplementedPokerServiceServer
-	store store.Store
+	store  store.Store
+	router *engine.Router
 }
 
-// New returns a Server wired to the given store.
-func New(s store.Store) *Server {
-	return &Server{store: s}
+// NewServer returns a Server wired to the given store and router.
+func NewServer(st store.Store, router *engine.Router) *Server {
+	return &Server{store: st, router: router}
 }
 
 // ── Lobby ─────────────────────────────────────────────────────────────────────
@@ -150,9 +152,6 @@ func (s *Server) MutePlayer(_ context.Context, _ *pb.MutePlayerCommand) (*pb.Mut
 	return nil, status.Error(codes.Unimplemented, "MutePlayer not implemented")
 }
 
-func (s *Server) PlaySession(stream pb.PokerService_PlaySessionServer) error {
-	return runSession(stream)
-}
 
 func (s *Server) StreamGameEvents(_ *pb.StreamGameEventsRequest, _ pb.PokerService_StreamGameEventsServer) error {
 	return status.Error(codes.Unimplemented, "StreamGameEvents not implemented")
