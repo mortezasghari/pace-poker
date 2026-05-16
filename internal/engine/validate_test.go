@@ -270,6 +270,21 @@ func TestValidateCall(t *testing.T) {
 	t.Run("not_your_turn", func(t *testing.T) {
 		assertCode(t, validateCall(withActor(newTestState(), actorP2), &pb.CallCommand{}, actorP1), CodeNotYourTurn)
 	})
+	t.Run("short_stack_capped_no_amount", func(t *testing.T) {
+		// Stack(60) < needed(100); callAmount caps at 60; command with amount=0 is valid.
+		s := withPlayerStack(newTestState(), actorP1, 60)
+		assertNil(t, validateCall(s, &pb.CallCommand{}, actorP1))
+	})
+	t.Run("short_stack_capped_matching_amount", func(t *testing.T) {
+		// Client explicitly sends the capped amount — should pass.
+		s := withPlayerStack(newTestState(), actorP1, 60)
+		assertNil(t, validateCall(s, &pb.CallCommand{Amount: 60}, actorP1))
+	})
+	t.Run("short_stack_wrong_amount", func(t *testing.T) {
+		// Client sends uncapped amount when stack is short — mismatch.
+		s := withPlayerStack(newTestState(), actorP1, 60)
+		assertCode(t, validateCall(s, &pb.CallCommand{Amount: bb}, actorP1), CodeCallAmountMismatch)
+	})
 }
 
 // ── Bet ───────────────────────────────────────────────────────────────────────
@@ -354,6 +369,18 @@ func TestValidateRaise(t *testing.T) {
 		s = withRaisesThisStreet(s, 10)
 		assertNil(t, validateRaise(s, &pb.RaiseCommand{To: minTo}, actorP1))
 	})
+	t.Run("action_closed_for_actor", func(t *testing.T) {
+		// A sub-min all-in raised the bet; actorP1's raise option is closed.
+		s := cloneState(newTestState())
+		s.CurrentHand.ActionClosedFor = []string{actorP1}
+		assertCode(t, validateRaise(s, &pb.RaiseCommand{To: minTo}, actorP1), CodeRaiseActionClosed)
+	})
+	t.Run("action_closed_for_other_player", func(t *testing.T) {
+		// Another player's action is closed, but not actorP1's.
+		s := cloneState(newTestState())
+		s.CurrentHand.ActionClosedFor = []string{actorP2}
+		assertNil(t, validateRaise(s, &pb.RaiseCommand{To: minTo}, actorP1))
+	})
 }
 
 // ── AllIn ─────────────────────────────────────────────────────────────────────
@@ -435,8 +462,15 @@ func TestValidateRunItTwice(t *testing.T) {
 func TestValidateSitOut(t *testing.T) {
 	sitout := &pb.SitOutCommand{}
 
-	t.Run("valid", func(t *testing.T) {
+	t.Run("valid_active", func(t *testing.T) {
 		assertNil(t, validateSitOut(newTestState(), sitout, actorP1))
+	})
+	t.Run("valid_while_waiting", func(t *testing.T) {
+		// Sit-out must work between hands when game is WAITING.
+		assertNil(t, validateSitOut(withStatus(withNoHand(newTestState()), pb.GameStatus_GAME_STATUS_WAITING), sitout, actorP1))
+	})
+	t.Run("closed_table", func(t *testing.T) {
+		assertCode(t, validateSitOut(withStatus(newTestState(), pb.GameStatus_GAME_STATUS_CLOSED), sitout, actorP1), CodeTableClosed)
 	})
 	t.Run("already_sitting_out", func(t *testing.T) {
 		assertCode(t, validateSitOut(withPlayerSittingOut(newTestState(), actorP1), sitout, actorP1), CodeAlreadySittingOut)
@@ -446,8 +480,16 @@ func TestValidateSitOut(t *testing.T) {
 func TestValidateSitIn(t *testing.T) {
 	sitin := &pb.SitInCommand{}
 
-	t.Run("valid", func(t *testing.T) {
+	t.Run("valid_active", func(t *testing.T) {
 		assertNil(t, validateSitIn(withPlayerSittingOut(newTestState(), actorP1), sitin, actorP1))
+	})
+	t.Run("valid_while_waiting", func(t *testing.T) {
+		s := withPlayerSittingOut(withStatus(withNoHand(newTestState()), pb.GameStatus_GAME_STATUS_WAITING), actorP1)
+		assertNil(t, validateSitIn(s, sitin, actorP1))
+	})
+	t.Run("closed_table", func(t *testing.T) {
+		s := withPlayerSittingOut(withStatus(newTestState(), pb.GameStatus_GAME_STATUS_CLOSED), actorP1)
+		assertCode(t, validateSitIn(s, sitin, actorP1), CodeTableClosed)
 	})
 	t.Run("already_sitting_in", func(t *testing.T) {
 		assertCode(t, validateSitIn(newTestState(), sitin, actorP1), CodeAlreadySittingIn)

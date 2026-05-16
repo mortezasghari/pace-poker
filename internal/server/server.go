@@ -12,11 +12,16 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// commandSubmitter is satisfied by *engine.Router. Extracted for testability.
+type commandSubmitter interface {
+	Submit(ctx context.Context, gameID uuid.UUID, actorPlayerID string, cmd *pb.PlayerCommand) ([]*pb.GameEvent, error)
+}
+
 // Server implements pb.PokerServiceServer.
 type Server struct {
 	pb.UnimplementedPokerServiceServer
 	store  store.Store
-	router *engine.Router
+	router commandSubmitter
 }
 
 // NewServer returns a Server wired to the given store and router.

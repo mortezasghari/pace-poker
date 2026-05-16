@@ -26,12 +26,14 @@ const (
 	CodeTableClosed       RejectionCode = "TABLE_CLOSED"
 
 	// Action legality
-	CodeIllegalAction    RejectionCode = "ILLEGAL_ACTION"
-	CodeCannotCheck      RejectionCode = "CANNOT_CHECK"
-	CodeCannotFold       RejectionCode = "CANNOT_FOLD"
-	CodeCannotShowYet    RejectionCode = "CANNOT_SHOW_YET"
-	CodeCannotMuckYet    RejectionCode = "CANNOT_MUCK_YET"
-	CodeCannotRunItTwice RejectionCode = "CANNOT_RUN_IT_TWICE"
+	CodeIllegalAction       RejectionCode = "ILLEGAL_ACTION"
+	CodeCannotCheck         RejectionCode = "CANNOT_CHECK"
+	CodeCannotFold          RejectionCode = "CANNOT_FOLD"
+	CodeCannotShowYet       RejectionCode = "CANNOT_SHOW_YET"
+	CodeCannotMuckYet       RejectionCode = "CANNOT_MUCK_YET"
+	CodeCannotRunItTwice    RejectionCode = "CANNOT_RUN_IT_TWICE"
+	// A sub-minimum all-in raise did not reopen this player's raise option.
+	CodeRaiseActionClosed RejectionCode = "RAISE_ACTION_CLOSED"
 
 	// Amount-based
 	CodeIllegalAmount       RejectionCode = "ILLEGAL_AMOUNT"

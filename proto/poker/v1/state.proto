@@ -108,6 +108,16 @@ message HandState {
   repeated string action_order = 22;
 
   google.protobuf.Timestamp started_at = 23;
+
+  // The "to" total of the last full (minimum-size) raise this street.
+  // Used to detect sub-minimum all-in raises. 0 = no full raise yet (pre-BB).
+  int64 last_full_raise_to = 24;
+
+  // Player IDs whose raise option is closed because a sub-minimum all-in
+  // raised the bet without meeting the minimum raise size. These players may
+  // call or fold, but may not re-raise unless a subsequent full raise reopens
+  // the action. Cleared when a full raise occurs or the street ends.
+  repeated string action_closed_for = 25;
 }
 
 // GameState is the authoritative snapshot of a table at a given version.

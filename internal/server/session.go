@@ -38,11 +38,24 @@ func (s *Server) PlaySession(stream pb.PokerService_PlaySessionServer) error {
 		}
 
 		for _, ev := range events {
+			if shouldSuppressFromActor(ev, actor) {
+				continue
+			}
 			if err := stream.Send(ev); err != nil {
 				return err
 			}
 		}
 	}
+}
+
+// shouldSuppressFromActor returns true for HoleCardsRevealed events that belong
+// to a different player — the acting player must not see opponents' hole cards.
+func shouldSuppressFromActor(ev *pb.GameEvent, actorPlayerID string) bool {
+	r, ok := ev.Event.(*pb.GameEvent_HoleCardsRevealed)
+	if !ok {
+		return false
+	}
+	return r.HoleCardsRevealed.GetPlayerId() != actorPlayerID
 }
 
 func buildRejection(cmd *pb.PlayerCommand, code, reason string) *pb.GameEvent {

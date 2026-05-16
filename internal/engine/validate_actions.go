@@ -132,6 +132,14 @@ func validateRaise(state *pb.GameState, cmd *pb.RaiseCommand, actor string) *Rej
 	if h.CurrentHighestBet == 0 {
 		return reject(CodeIllegalAction, "no bet to raise; use bet instead")
 	}
+	// A sub-minimum all-in raise does not reopen the raise option for players
+	// who had already acted against the previous full bet.
+	for _, pid := range h.ActionClosedFor {
+		if pid == actor {
+			return reject(CodeRaiseActionClosed,
+				"a sub-minimum all-in raise did not reopen your action; you may call or fold")
+		}
+	}
 	if cmd.To <= h.CurrentHighestBet {
 		return reject(CodeIllegalAmount, "raise to %d must exceed current bet %d", cmd.To, h.CurrentHighestBet)
 	}

@@ -10,7 +10,7 @@ import (
 const maxChatMessageRunes = 500
 
 func validateSitOut(state *pb.GameState, _ *pb.SitOutCommand, actor string) *RejectionReason {
-	if r := requireActiveGame(state); r != nil {
+	if r := requireTableOpen(state); r != nil {
 		return r
 	}
 	p, r := requireSeated(state, actor)
@@ -24,7 +24,7 @@ func validateSitOut(state *pb.GameState, _ *pb.SitOutCommand, actor string) *Rej
 }
 
 func validateSitIn(state *pb.GameState, _ *pb.SitInCommand, actor string) *RejectionReason {
-	if r := requireActiveGame(state); r != nil {
+	if r := requireTableOpen(state); r != nil {
 		return r
 	}
 	p, r := requireSeated(state, actor)
@@ -58,6 +58,9 @@ func validateUseTimeBank(state *pb.GameState, _ *pb.UseTimeBankCommand, actor st
 }
 
 func validateChatMessage(state *pb.GameState, cmd *pb.ChatMessageCommand, actor string) *RejectionReason {
+	if r := requireTableOpen(state); r != nil {
+		return r
+	}
 	if state.Config == nil || !state.Config.AllowChat {
 		return reject(CodeChatDisabled, "chat is disabled at this table")
 	}
@@ -75,6 +78,9 @@ func validateChatMessage(state *pb.GameState, cmd *pb.ChatMessageCommand, actor 
 }
 
 func validateEmote(state *pb.GameState, cmd *pb.EmoteCommand, actor string) *RejectionReason {
+	if r := requireTableOpen(state); r != nil {
+		return r
+	}
 	if state.Config == nil || !state.Config.AllowChat {
 		return reject(CodeChatDisabled, "chat is disabled at this table")
 	}
@@ -83,16 +89,6 @@ func validateEmote(state *pb.GameState, cmd *pb.EmoteCommand, actor string) *Rej
 	}
 	if strings.TrimSpace(cmd.EmoteId) == "" {
 		return reject(CodeMalformedCommand, "emote_id is required")
-	}
-	return nil
-}
-
-func validateResume(state *pb.GameState, _ *pb.ResumeCommand, actor string) *RejectionReason {
-	if r := requireActiveGame(state); r != nil {
-		return r
-	}
-	if _, r := requireSeated(state, actor); r != nil {
-		return r
 	}
 	return nil
 }

@@ -19,13 +19,17 @@ var ErrGameNotFound = errors.New("engine: game not found")
 // RouterOptions configures a Router.
 type RouterOptions struct {
 	SessionOptions SessionOptions
-	ReapInterval   time.Duration // default 1 minute
+	ReapInterval   time.Duration    // default 1 minute
+	DealerFactory  func() Dealer    // default: NewCryptoDealer
 }
 
 func (o *RouterOptions) withDefaults() {
 	o.SessionOptions.withDefaults()
 	if o.ReapInterval == 0 {
 		o.ReapInterval = time.Minute
+	}
+	if o.DealerFactory == nil {
+		o.DealerFactory = func() Dealer { return NewCryptoDealer() }
 	}
 }
 
@@ -96,7 +100,7 @@ func (r *Router) getOrLoad(ctx context.Context, gameID uuid.UUID) (*Session, err
 		return nil, err
 	}
 
-	sess = NewSession(r.ctx, gameID, state, r.store, r.opts.SessionOptions)
+	sess = NewSession(r.ctx, gameID, state, r.store, r.opts.DealerFactory(), r.opts.SessionOptions)
 	r.sessions[gameID] = sess
 	r.mu.Unlock()
 	return sess, nil
@@ -120,7 +124,7 @@ func (r *Router) loadState(ctx context.Context, gameID uuid.UUID) (*pb.GameState
 		if len(events) == 0 {
 			break
 		}
-		state = applyEvents(state, events)
+		state = applyAll(state, events)
 		snapSeq = events[len(events)-1].GetSequence()
 	}
 	return state, nil

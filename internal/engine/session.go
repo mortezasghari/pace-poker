@@ -47,6 +47,7 @@ func (o *SessionOptions) withDefaults() {
 type Session struct {
 	gameID    uuid.UUID
 	store     store.Store
+	dealer    Dealer
 	inbox     chan envelope
 	closed    chan struct{} // closed when run() returns
 	closeOnce func()       // idempotent close trigger
@@ -78,6 +79,7 @@ func NewSession(
 	gameID uuid.UUID,
 	initialState *pb.GameState,
 	st store.Store,
+	dlr Dealer,
 	opts SessionOptions,
 ) *Session {
 	opts.withDefaults()
@@ -87,6 +89,7 @@ func NewSession(
 	s := &Session{
 		gameID:      gameID,
 		store:       st,
+		dealer:      dlr,
 		inbox:       make(chan envelope, opts.InboxSize),
 		closed:      make(chan struct{}),
 		idleAfter:   opts.IdleAfter,
@@ -173,7 +176,7 @@ func (s *Session) run(ctx context.Context, state *pb.GameState) {
 		case env := <-s.inbox:
 			events, err := s.process(ctx, state, env.actor, env.cmd)
 			if err == nil {
-				state = applyEvents(state, events)
+				state = applyAll(state, events)
 			}
 			env.reply <- result{events: events, err: err}
 		case replyCh := <-s.testStateCh:
@@ -184,8 +187,9 @@ func (s *Session) run(ctx context.Context, state *pb.GameState) {
 
 // process handles one command:
 //  1. Check idempotency via command_id.
-//  2. Validate and compute events.
-//  3. Persist events via the store BEFORE updating in-memory state.
+//  2. Intercept session-layer commands (Resume) before engine dispatch.
+//  3. Validate and compute events via the engine.
+//  4. Persist events via the store BEFORE updating in-memory state.
 //
 // A DB write failure returns an error without mutating state.
 func (s *Session) process(ctx context.Context, state *pb.GameState, actor string, cmd *pb.PlayerCommand) ([]*pb.GameEvent, error) {
@@ -195,7 +199,16 @@ func (s *Session) process(ctx context.Context, state *pb.GameState, actor string
 		}
 	}
 
-	events := handleCommand(state, cmd, actor)
+	// Resume is handled here so it can check exactly PAUSED status and then
+	// run advance to start a new hand if needed — without engine validation baggage.
+	if _, ok := cmd.Payload.(*pb.PlayerCommand_Resume); ok {
+		return s.handleResume(ctx, state, cmd)
+	}
+
+	events, err := HandleCommand(state, cmd, actor, s.dealer)
+	if err != nil {
+		return nil, fmt.Errorf("handle command: %w", err)
+	}
 
 	// Tag every event with the command that caused it before persisting.
 	for _, evt := range events {
@@ -209,6 +222,47 @@ func (s *Session) process(ctx context.Context, state *pb.GameState, actor string
 	}
 
 	return events, nil
+}
+
+// handleResume processes a ResumeCommand at the session layer.
+// Only valid when the game is PAUSED; runs advance after resuming so the
+// engine can start a new hand immediately if conditions are met.
+func (s *Session) handleResume(ctx context.Context, state *pb.GameState, cmd *pb.PlayerCommand) ([]*pb.GameEvent, error) {
+	cmdID := cmd.GetCommandId()
+	tag := func(evts []*pb.GameEvent) {
+		for _, e := range evts {
+			if e.CausedByCommandId == "" {
+				e.CausedByCommandId = cmdID
+			}
+		}
+	}
+
+	if state.Status != pb.GameStatus_GAME_STATUS_PAUSED {
+		reason := reject(CodeIllegalAction, "cannot resume: game is not paused (status=%s)", state.Status)
+		evt := reason.toCommandRejectedEvent(state.GetGameId(), cmdID)
+		tag([]*pb.GameEvent{evt})
+		if err := s.store.AppendEvents(ctx, []*pb.GameEvent{evt}); err != nil {
+			return nil, fmt.Errorf("persist resume rejection: %w", err)
+		}
+		return []*pb.GameEvent{evt}, nil
+	}
+
+	resumeEvt := &pb.GameEvent{Event: &pb.GameEvent_TableResumed{TableResumed: &pb.TableResumed{}}}
+
+	// Apply resume, then drive the lifecycle forward.
+	curr := apply(state, resumeEvt)
+	advEvts, err := runAdvance(curr, s.dealer)
+	if err != nil {
+		return nil, fmt.Errorf("advance after resume: %w", err)
+	}
+
+	allEvts := append([]*pb.GameEvent{resumeEvt}, advEvts...)
+	tag(allEvts)
+
+	if err := s.store.AppendEvents(ctx, allEvts); err != nil {
+		return nil, fmt.Errorf("persist resume events: %w", err)
+	}
+	return allEvts, nil
 }
 
 func (s *Session) lookupByCommandID(ctx context.Context, commandID string) ([]*pb.GameEvent, error) {

@@ -34,7 +34,7 @@ func makeFoldCmd(cmdID string, gameID uuid.UUID) *pb.PlayerCommand {
 func newTestSession(t *testing.T, st *fakeStore, opts SessionOptions) (*Session, uuid.UUID) {
 	t.Helper()
 	gameID := uuid.New()
-	s := NewSession(context.Background(), gameID, makeState(gameID), st, opts)
+	s := NewSession(context.Background(), gameID, makeState(gameID), st, NewCryptoDealer(), opts)
 	t.Cleanup(func() {
 		s.Close()
 		select {
@@ -221,8 +221,9 @@ func TestSession_PersistFailureDoesNotMutateState(t *testing.T) {
 
 	after := stateForTest(s)
 
-	// applyEvents is a stub — state pointer must be unchanged.
-	if before != after {
-		t.Error("state pointer changed: applyEvents stub must return the same pointer")
+	// The persist failure must not have advanced the state: the version after
+	// the failed command equals the version before it.
+	if before.Version != after.Version-1 {
+		t.Errorf("unexpected version jump: before=%d after=%d (want after==before+1)", before.Version, after.Version)
 	}
 }

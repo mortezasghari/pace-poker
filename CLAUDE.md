@@ -180,3 +180,57 @@ Validation is in `internal/engine/validate*.go`. Rules:
    - Add test cases for the valid path and every rejection code.
 6. `actorPlayerID` flows in from the gRPC auth layer (`authstub.go` for now),
    not from the proto payload — clients cannot self-assert their identity.
+
+## Game lifecycle manager
+
+The lifecycle layer (`internal/engine/advance.go`, `handler.go`) drives automatic
+game progression. Three pure layers:
+
+- **apply** (`apply.go`): `apply(state, event) → *GameState`. Immutable — uses
+  `proto.Clone` at the top; never mutates the input. `applyAll` is the batch helper.
+- **advance** (`advance.go`): `advance(state, dealer, now) → ([]event, error)`.
+  Examines state and emits the next server-driven batch (start hand, deal board
+  cards, award pot, etc.) or nil if waiting for a player action.
+- **HandleCommand** (`handler.go`): Validates → builds command event(s) → runs
+  `applyAll` → loops `advance` until quiescent → returns the full event list.
+
+Rules for working in this layer:
+
+1. `apply` and `advance` are pure functions (except for `Dealer` randomness).
+   No store access, no clock (pass `now time.Time` for deadlines).
+2. `advance` returns nil (not an error) when the engine is waiting for input.
+   Go errors are for unexpected I/O or internal failures only.
+3. The advance loop in `HandleCommand` has a step cap (64) to guard against
+   infinite loops. If you add a new lifecycle step, verify it terminates.
+4. Hand evaluator in `endHandShowdown` is a stub (first non-folded wins). Replace
+   with a real evaluator before going live with real money.
+5. `Dealer` is injected: production code uses `CryptoDealer`; tests use
+   `FixedDealer` for deterministic card sequences.
+6. `DealerFactory` in `RouterOptions` defaults to `NewCryptoDealer`. Override in
+   tests that need deterministic dealing.
+
+## Known gaps (TODO before real money)
+
+- **Hand evaluator**: `endHandShowdown` awards each pot to the first non-folded player in
+  `ActionOrder` that is eligible. Replace with a real 5-card evaluator.
+- **Run-it-twice**: `RunItTwiceAgreed` is emitted but no second board is dealt. Wire up
+  `SecondBoardDealt` in `endHandShowdown`.
+- **Action timeout**: `PlayerTimedOut` event has no follow-up default action. The advance
+  loop needs to check `ActionDeadline` and emit a default fold/check.
+- **Must-post-blind**: `PlayerState.MustPostBlind` is set but never consumed. Players
+  returning from sit-out mid-orbit should post a dead blind before being dealt in.
+- **Stream filtering**: `HoleCardsRevealed` is private (one player), but session broadcast
+  is not yet filtered. Each stream subscriber should only receive their own hole cards.
+- **Side-pot winner**: each pot's winner is the stub (first eligible in ActionOrder). Replace
+  per-pot winner selection when the hand evaluator is implemented.
+
+## Engine money rules (implemented)
+
+- Call amount is capped at the caller's stack (short-stack all-in calls).
+- Side pots are computed from `TotalCommittedThisHand` via `computePots` in `pot.go`.
+- Rake is taken from the total pot before awarding: `RakeTaken` → `SidePotCreated` → `PotAwarded`.
+- Sub-minimum all-in raises do not reopen the raise option for players who already acted.
+  Tracked via `HandState.action_closed_for` (proto field 25); validated in `validateRaise`.
+- Zero-stack players are auto-sat-out by `advanceIdle` before the next hand starts.
+- `ResumeCommand` is handled in `Session.handleResume` (session layer), not the engine.
+  It checks `status == PAUSED` and runs advance after resuming.
