@@ -15,6 +15,7 @@ type fakeStore struct {
 	appendErr       error
 	appendCallCount int
 	byCommandID     map[string]*pb.GameEvent
+	latestSeq       uint64 // tracks max sequence across all appended events
 
 	snapshots     map[string]*pb.GameState
 	snapSeqs      map[string]uint64
@@ -42,6 +43,9 @@ func (f *fakeStore) setSnapshot(gameID uuid.UUID, state *pb.GameState, seq uint6
 	defer f.mu.Unlock()
 	f.snapshots[gameID.String()] = state
 	f.snapSeqs[gameID.String()] = seq
+	if seq > f.latestSeq {
+		f.latestSeq = seq
+	}
 }
 
 // ── store.Store implementation ────────────────────────────────────────────────
@@ -75,6 +79,9 @@ func (f *fakeStore) AppendEvents(ctx context.Context, evts []*pb.GameEvent) erro
 	for _, evt := range evts {
 		if id := evt.GetCausedByCommandId(); id != "" {
 			f.byCommandID[id] = evt
+		}
+		if seq := evt.GetSequence(); seq > f.latestSeq {
+			f.latestSeq = seq
 		}
 	}
 	return nil
@@ -139,7 +146,9 @@ func (f *fakeStore) CreateTable(ctx context.Context, cfg *pb.CashGameConfig, id 
 	return nil, nil
 }
 func (f *fakeStore) GetLatestSequence(ctx context.Context, id uuid.UUID) (uint64, error) {
-	return 0, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.latestSeq, nil
 }
 func (f *fakeStore) CreateSnapshot(ctx context.Context, state *pb.GameState, hand int64) error {
 	return nil

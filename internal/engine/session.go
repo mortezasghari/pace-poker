@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	pb "github.com/pacepoker/poker/gen/go/poker/v1"
 	"github.com/pacepoker/poker/internal/store"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 var (
@@ -217,6 +218,10 @@ func (s *Session) process(ctx context.Context, state *pb.GameState, actor string
 		}
 	}
 
+	if err := s.stampEvents(ctx, events); err != nil {
+		return nil, fmt.Errorf("stamp events: %w", err)
+	}
+
 	if err := s.store.AppendEvents(ctx, events); err != nil {
 		return nil, fmt.Errorf("persist events: %w", err)
 	}
@@ -241,6 +246,9 @@ func (s *Session) handleResume(ctx context.Context, state *pb.GameState, cmd *pb
 		reason := reject(CodeIllegalAction, "cannot resume: game is not paused (status=%s)", state.Status)
 		evt := reason.toCommandRejectedEvent(state.GetGameId(), cmdID)
 		tag([]*pb.GameEvent{evt})
+		if err := s.stampEvents(ctx, []*pb.GameEvent{evt}); err != nil {
+			return nil, fmt.Errorf("stamp resume rejection: %w", err)
+		}
 		if err := s.store.AppendEvents(ctx, []*pb.GameEvent{evt}); err != nil {
 			return nil, fmt.Errorf("persist resume rejection: %w", err)
 		}
@@ -259,10 +267,41 @@ func (s *Session) handleResume(ctx context.Context, state *pb.GameState, cmd *pb
 	allEvts := append([]*pb.GameEvent{resumeEvt}, advEvts...)
 	tag(allEvts)
 
+	if err := s.stampEvents(ctx, allEvts); err != nil {
+		return nil, fmt.Errorf("stamp resume events: %w", err)
+	}
+
 	if err := s.store.AppendEvents(ctx, allEvts); err != nil {
 		return nil, fmt.Errorf("persist resume events: %w", err)
 	}
 	return allEvts, nil
+}
+
+// stampEvents sets GameId, Sequence, StateVersion, and OccurredAt on every
+// event in the slice, fetching the current latest sequence from the store to
+// assign the next monotonically increasing values. Must be called immediately
+// before AppendEvents — the gap between GetLatestSequence and the insert is
+// safe because the session serialises all writes for a given game.
+func (s *Session) stampEvents(ctx context.Context, events []*pb.GameEvent) error {
+	if len(events) == 0 {
+		return nil
+	}
+	latestSeq, err := s.store.GetLatestSequence(ctx, s.gameID)
+	if err != nil {
+		return fmt.Errorf("get latest sequence: %w", err)
+	}
+	gameID := s.gameID.String()
+	now := timestamppb.Now()
+	for i, evt := range events {
+		evt.GameId = gameID
+		seq := latestSeq + uint64(i) + 1
+		evt.Sequence = seq
+		evt.StateVersion = int64(seq)
+		if evt.OccurredAt == nil {
+			evt.OccurredAt = now
+		}
+	}
+	return nil
 }
 
 func (s *Session) lookupByCommandID(ctx context.Context, commandID string) ([]*pb.GameEvent, error) {

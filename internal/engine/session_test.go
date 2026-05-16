@@ -34,6 +34,14 @@ func makeFoldCmd(cmdID string, gameID uuid.UUID) *pb.PlayerCommand {
 func newTestSession(t *testing.T, st *fakeStore, opts SessionOptions) (*Session, uuid.UUID) {
 	t.Helper()
 	gameID := uuid.New()
+	// makeState starts with Version=1, meaning one event (e.g. TableCreated at
+	// seq=1) has already been persisted. Prime the fake store's sequence counter
+	// so stampEvents assigns seq=2 to the first engine event.
+	st.mu.Lock()
+	if st.latestSeq == 0 {
+		st.latestSeq = 1
+	}
+	st.mu.Unlock()
 	s := NewSession(context.Background(), gameID, makeState(gameID), st, NewCryptoDealer(), opts)
 	t.Cleanup(func() {
 		s.Close()
@@ -191,6 +199,72 @@ func TestSession_IdempotentByCommandID(t *testing.T) {
 	fs.mu.Unlock()
 	if count != 1 {
 		t.Errorf("AppendEvents called %d times, want 1 (idempotent)", count)
+	}
+}
+
+func TestSession_EventsAreStamped(t *testing.T) {
+	fs := newFakeStore()
+	s, gameID := newTestSession(t, fs, SessionOptions{})
+
+	events, err := s.Submit(context.Background(), "player1", makeFoldCmd(uuid.New().String(), gameID))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("expected at least one event")
+	}
+	for i, ev := range events {
+		if ev.GameId != gameID.String() {
+			t.Errorf("event[%d]: GameId=%q, want %q", i, ev.GameId, gameID.String())
+		}
+		if ev.Sequence == 0 {
+			t.Errorf("event[%d]: Sequence is 0", i)
+		}
+		if ev.StateVersion == 0 {
+			t.Errorf("event[%d]: StateVersion is 0", i)
+		}
+		if ev.OccurredAt == nil {
+			t.Errorf("event[%d]: OccurredAt is nil", i)
+		}
+		if ev.StateVersion != int64(ev.Sequence) {
+			t.Errorf("event[%d]: StateVersion %d != Sequence %d", i, ev.StateVersion, ev.Sequence)
+		}
+	}
+
+	// Sequences start at latestSeq(1)+1=2 and are contiguous.
+	for i, ev := range events {
+		want := uint64(i + 2)
+		if ev.Sequence != want {
+			t.Errorf("event[%d]: got sequence %d, want %d", i, ev.Sequence, want)
+		}
+	}
+}
+
+func TestSession_SequencesMonotonicallyIncrease(t *testing.T) {
+	fs := newFakeStore()
+	s, gameID := newTestSession(t, fs, SessionOptions{})
+
+	events1, err := s.Submit(context.Background(), "p", makeFoldCmd(uuid.New().String(), gameID))
+	if err != nil {
+		t.Fatalf("first Submit: %v", err)
+	}
+	events2, err := s.Submit(context.Background(), "p", makeFoldCmd(uuid.New().String(), gameID))
+	if err != nil {
+		t.Fatalf("second Submit: %v", err)
+	}
+
+	maxSeq1 := events1[len(events1)-1].GetSequence()
+	minSeq2 := events2[0].GetSequence()
+	if minSeq2 <= maxSeq1 {
+		t.Errorf("sequence gap: first batch max=%d, second batch min=%d (want min2 > max1)",
+			maxSeq1, minSeq2)
+	}
+	// Each batch must be internally contiguous.
+	for i := 1; i < len(events2); i++ {
+		if events2[i].Sequence != events2[i-1].Sequence+1 {
+			t.Errorf("batch2 event[%d]: sequence %d is not contiguous after %d",
+				i, events2[i].Sequence, events2[i-1].Sequence)
+		}
 	}
 }
 
