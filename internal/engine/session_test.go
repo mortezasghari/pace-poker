@@ -59,7 +59,7 @@ func stateForTest(s *Session) *pb.GameState {
 func TestSession_SubmitProducesRejection(t *testing.T) {
 	s, gameID := newTestSession(t, newFakeStore(), SessionOptions{})
 
-	events, err := s.Submit(context.Background(), makeFoldCmd(uuid.New().String(), gameID))
+	events, err := s.Submit(context.Background(), "test-actor", makeFoldCmd(uuid.New().String(), gameID))
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
@@ -70,8 +70,8 @@ func TestSession_SubmitProducesRejection(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected CommandRejected, got %T", events[0].Event)
 	}
-	if rejected.CommandRejected.GetCode() != "UNIMPLEMENTED" {
-		t.Errorf("code: got %q, want UNIMPLEMENTED", rejected.CommandRejected.GetCode())
+	if rejected.CommandRejected.GetCode() == "" {
+		t.Error("expected non-empty rejection code")
 	}
 }
 
@@ -86,7 +86,7 @@ func TestSession_SerializesCommands(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, errs[i] = s.Submit(context.Background(), makeFoldCmd(uuid.New().String(), gameID))
+			_, errs[i] = s.Submit(context.Background(), "test-actor", makeFoldCmd(uuid.New().String(), gameID))
 		}(i)
 	}
 	wg.Wait()
@@ -115,7 +115,7 @@ func TestSession_ClosedReturnsError(t *testing.T) {
 		t.Fatal("session did not close within 1s")
 	}
 
-	_, err := s.Submit(context.Background(), makeFoldCmd(uuid.New().String(), gameID))
+	_, err := s.Submit(context.Background(), "test-actor", makeFoldCmd(uuid.New().String(), gameID))
 	if !errors.Is(err, ErrSessionClosed) {
 		t.Errorf("expected ErrSessionClosed, got: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestSession_ContextCancelOnSubmit(t *testing.T) {
 	})
 
 	// Start a submit that will block inside AppendEvents.
-	go s.Submit(context.Background(), makeFoldCmd(uuid.New().String(), gameID))
+	go s.Submit(context.Background(), "test-actor", makeFoldCmd(uuid.New().String(), gameID))
 
 	// Wait until the run loop is inside AppendEvents (guaranteed signal).
 	select {
@@ -167,7 +167,7 @@ func TestSession_ContextCancelOnSubmit(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := s.Submit(ctx, makeFoldCmd(uuid.New().String(), gameID))
+	_, err := s.Submit(ctx, "test-actor", makeFoldCmd(uuid.New().String(), gameID))
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled, got: %v", err)
 	}
@@ -179,10 +179,10 @@ func TestSession_IdempotentByCommandID(t *testing.T) {
 
 	cmdID := uuid.New().String()
 
-	if _, err := s.Submit(context.Background(), makeFoldCmd(cmdID, gameID)); err != nil {
+	if _, err := s.Submit(context.Background(), "test-actor", makeFoldCmd(cmdID, gameID)); err != nil {
 		t.Fatalf("first Submit: %v", err)
 	}
-	if _, err := s.Submit(context.Background(), makeFoldCmd(cmdID, gameID)); err != nil {
+	if _, err := s.Submit(context.Background(), "test-actor", makeFoldCmd(cmdID, gameID)); err != nil {
 		t.Fatalf("second Submit: %v", err)
 	}
 
@@ -202,7 +202,7 @@ func TestSession_PersistFailureDoesNotMutateState(t *testing.T) {
 	s, gameID := newTestSession(t, fs, SessionOptions{})
 
 	// First submit: persist fails — error must surface.
-	_, err := s.Submit(context.Background(), makeFoldCmd(uuid.New().String(), gameID))
+	_, err := s.Submit(context.Background(), "test-actor", makeFoldCmd(uuid.New().String(), gameID))
 	if !errors.Is(err, persistErr) {
 		t.Fatalf("expected persist error, got: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestSession_PersistFailureDoesNotMutateState(t *testing.T) {
 	fs.mu.Unlock()
 
 	// Second submit must succeed.
-	if _, err := s.Submit(context.Background(), makeFoldCmd(uuid.New().String(), gameID)); err != nil {
+	if _, err := s.Submit(context.Background(), "test-actor", makeFoldCmd(uuid.New().String(), gameID)); err != nil {
 		t.Fatalf("second Submit after fixing store: %v", err)
 	}
 

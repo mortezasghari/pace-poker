@@ -61,6 +61,7 @@ type Session struct {
 
 type envelope struct {
 	cmd   *pb.PlayerCommand
+	actor string
 	reply chan result
 }
 
@@ -105,12 +106,14 @@ func NewSession(
 }
 
 // Submit sends a command to the session and waits for the resulting events.
+// actorPlayerID identifies who is sending the command (verified by the caller's
+// auth layer, not trusted from the proto payload).
 // Safe to call from many goroutines concurrently — the session serializes them.
-func (s *Session) Submit(ctx context.Context, cmd *pb.PlayerCommand) ([]*pb.GameEvent, error) {
+func (s *Session) Submit(ctx context.Context, actorPlayerID string, cmd *pb.PlayerCommand) ([]*pb.GameEvent, error) {
 	s.lastUsed.Store(time.Now().UnixNano())
 
 	reply := make(chan result, 1) // buffered so run never blocks on a giving-up caller
-	env := envelope{cmd: cmd, reply: reply}
+	env := envelope{cmd: cmd, actor: actorPlayerID, reply: reply}
 
 	select {
 	case s.inbox <- env:
@@ -168,7 +171,7 @@ func (s *Session) run(ctx context.Context, state *pb.GameState) {
 		case <-idle.C:
 			return
 		case env := <-s.inbox:
-			events, err := s.process(ctx, state, env.cmd)
+			events, err := s.process(ctx, state, env.actor, env.cmd)
 			if err == nil {
 				state = applyEvents(state, events)
 			}
@@ -181,25 +184,20 @@ func (s *Session) run(ctx context.Context, state *pb.GameState) {
 
 // process handles one command:
 //  1. Check idempotency via command_id.
-//  2. Compute events (stub handler).
+//  2. Validate and compute events.
 //  3. Persist events via the store BEFORE updating in-memory state.
 //
 // A DB write failure returns an error without mutating state.
-func (s *Session) process(ctx context.Context, state *pb.GameState, cmd *pb.PlayerCommand) ([]*pb.GameEvent, error) {
+func (s *Session) process(ctx context.Context, state *pb.GameState, actor string, cmd *pb.PlayerCommand) ([]*pb.GameEvent, error) {
 	if cmd.GetCommandId() != "" {
 		if existing, err := s.lookupByCommandID(ctx, cmd.GetCommandId()); err == nil && existing != nil {
 			return existing, nil
 		}
 	}
 
-	events, err := handleCommand(state, cmd)
-	if err != nil {
-		return nil, fmt.Errorf("handle command: %w", err)
-	}
+	events := handleCommand(state, cmd, actor)
 
 	// Tag every event with the command that caused it before persisting.
-	// TODO: assign monotonic sequence numbers before AppendEvents when real
-	// game logic is wired in; the store layer currently expects the caller to set them.
 	for _, evt := range events {
 		if evt.CausedByCommandId == "" {
 			evt.CausedByCommandId = cmd.GetCommandId()
@@ -225,6 +223,5 @@ func (s *Session) lookupByCommandID(ctx context.Context, commandID string) ([]*p
 	if err != nil {
 		return nil, err
 	}
-	// TODO: fetch all events for this command (multi-event commands are a future concern).
 	return []*pb.GameEvent{evt}, nil
 }

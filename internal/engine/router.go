@@ -62,12 +62,13 @@ func NewRouter(parentCtx context.Context, st store.Store, opts RouterOptions) *R
 }
 
 // Submit routes a command to the session for gameID, loading it if necessary.
-func (r *Router) Submit(ctx context.Context, gameID uuid.UUID, cmd *pb.PlayerCommand) ([]*pb.GameEvent, error) {
+// actorPlayerID is the verified identity of the caller (from auth, not the proto).
+func (r *Router) Submit(ctx context.Context, gameID uuid.UUID, actorPlayerID string, cmd *pb.PlayerCommand) ([]*pb.GameEvent, error) {
 	sess, err := r.getOrLoad(ctx, gameID)
 	if err != nil {
 		return nil, err
 	}
-	return sess.Submit(ctx, cmd)
+	return sess.Submit(ctx, actorPlayerID, cmd)
 }
 
 // getOrLoad returns the session for gameID, loading from the store if needed.

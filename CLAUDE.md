@@ -161,3 +161,22 @@ Rules for working in this package:
    must not leave in-memory state ahead of the persisted log.
 4. `Submit` is safe to call from many goroutines. The Session serializes them.
    You should not need `sync.RWMutex`, `sync.Map`, or `sync/atomic` at this layer.
+
+## Command validation
+
+Validation is in `internal/engine/validate*.go`. Rules:
+
+1. Validators are pure functions: `(state, cmd, actor) → *RejectionReason`.
+   No store access, no clock, no I/O. They must be safe to call repeatedly.
+2. Rejections are events (`CommandRejected`), NOT Go errors. Go errors are
+   reserved for unexpected internal failures.
+3. Rejection codes (in `rejection.go`) are stable identifiers. Never change
+   an existing code's value — only add new ones.
+4. `JoinTable` and `LeaveTable` are NOT validated here — they require account
+   service coordination and have their own flow.
+5. To add a new command:
+   - Add a `validate<Name>` function in the appropriate `validate_*.go` file.
+   - Add a case in the `validate()` dispatch switch in `handler.go`.
+   - Add test cases for the valid path and every rejection code.
+6. `actorPlayerID` flows in from the gRPC auth layer (`authstub.go` for now),
+   not from the proto payload — clients cannot self-assert their identity.

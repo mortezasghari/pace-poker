@@ -11,6 +11,7 @@ import (
 // Commands are routed through the engine.Router; events are streamed back.
 func (s *Server) PlaySession(stream pb.PokerService_PlaySessionServer) error {
 	ctx := stream.Context()
+	actor := actorPlayerIDFromContext(ctx)
 	for {
 		cmd, err := stream.Recv()
 		if err == io.EOF {
@@ -28,7 +29,7 @@ func (s *Server) PlaySession(stream pb.PokerService_PlaySessionServer) error {
 			continue
 		}
 
-		events, err := s.router.Submit(ctx, gameID, cmd)
+		events, err := s.router.Submit(ctx, gameID, actor, cmd)
 		if err != nil {
 			if sendErr := stream.Send(buildRejection(cmd, "INTERNAL", err.Error())); sendErr != nil {
 				return sendErr

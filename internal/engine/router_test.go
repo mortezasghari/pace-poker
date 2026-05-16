@@ -28,7 +28,7 @@ func TestRouter_LazyLoadsSession(t *testing.T) {
 		t.Fatalf("expected 0 sessions before first submit, got %d", r.ActiveSessionCount())
 	}
 
-	_, err := r.Submit(context.Background(), gameID, makeFoldCmd(uuid.New().String(), gameID))
+	_, err := r.Submit(context.Background(), gameID, "test-actor", makeFoldCmd(uuid.New().String(), gameID))
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestRouter_ReturnsErrGameNotFound(t *testing.T) {
 	fs := newFakeStore() // no snapshots registered
 	r := newTestRouter(t, fs, RouterOptions{})
 
-	_, err := r.Submit(context.Background(), uuid.New(), makeFoldCmd(uuid.New().String(), uuid.New()))
+	_, err := r.Submit(context.Background(), uuid.New(), "test-actor", makeFoldCmd(uuid.New().String(), uuid.New()))
 	if !errors.Is(err, ErrGameNotFound) {
 		t.Errorf("expected ErrGameNotFound, got: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestRouter_ReusesExistingSession(t *testing.T) {
 
 	r := newTestRouter(t, fs, RouterOptions{})
 
-	cmd := func() { r.Submit(context.Background(), gameID, makeFoldCmd(uuid.New().String(), gameID)) } //nolint:errcheck
+	cmd := func() { r.Submit(context.Background(), gameID, "test-actor", makeFoldCmd(uuid.New().String(), gameID)) } //nolint:errcheck
 	cmd()
 	cmd()
 
@@ -85,7 +85,7 @@ func TestRouter_ConcurrentLoadOfSameGame(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, errs[i] = r.Submit(context.Background(), gameID, makeFoldCmd(uuid.New().String(), gameID))
+			_, errs[i] = r.Submit(context.Background(), gameID, "test-actor", makeFoldCmd(uuid.New().String(), gameID))
 		}(i)
 	}
 	wg.Wait()
@@ -118,7 +118,7 @@ func TestRouter_ReapsExitedSessions(t *testing.T) {
 		ReapInterval:   time.Hour, // disable automatic reaping; we call reapOnce manually
 	})
 
-	if _, err := r.Submit(context.Background(), gameID, makeFoldCmd(uuid.New().String(), gameID)); err != nil {
+	if _, err := r.Submit(context.Background(), gameID, "test-actor", makeFoldCmd(uuid.New().String(), gameID)); err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
 	if r.ActiveSessionCount() != 1 {
@@ -163,7 +163,7 @@ func TestRouter_CloseShutsDownAllSessions(t *testing.T) {
 		id := uuid.New()
 		gameIDs[i] = id
 		fs.setSnapshot(id, makeState(id), 0)
-		if _, err := r.Submit(context.Background(), id, makeFoldCmd(uuid.New().String(), id)); err != nil {
+		if _, err := r.Submit(context.Background(), id, "test-actor", makeFoldCmd(uuid.New().String(), id)); err != nil {
 			t.Fatalf("Submit game %d: %v", i, err)
 		}
 	}
