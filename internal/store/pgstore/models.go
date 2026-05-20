@@ -50,3 +50,42 @@ type GameSnapshot struct {
 	StateProto []byte
 	TakenAt    pgtype.Timestamptz
 }
+
+type StepDepositReport struct {
+	ID            int64
+	UserID        uuid.UUID
+	ReportID      uuid.UUID
+	ReportedSteps int64
+	CreditedChips int64
+	LocalDate     pgtype.Date
+	ReportedAt    pgtype.Timestamptz
+	Reason        string
+}
+
+type User struct {
+	ID              uuid.UUID
+	DisplayName     string
+	ExternalID      *string
+	Timezone        string
+	MaxDailyDeposit int64
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	DeletedAt       pgtype.Timestamptz
+}
+
+type UserDailyStep struct {
+	UserID         uuid.UUID
+	LocalDate      pgtype.Date
+	MaxSteps       int64
+	LastReportedAt pgtype.Timestamptz
+}
+
+type UserSnapshot struct {
+	UserID         uuid.UUID
+	ChipBalance    int64
+	TotalDeposited int64
+	TotalReports   int64
+	LastDepositAt  pgtype.Timestamptz
+	LastActivityAt pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}

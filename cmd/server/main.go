@@ -46,6 +46,7 @@ func main() {
 
 	grpcServer := grpc.NewServer()
 	pb.RegisterPokerServiceServer(grpcServer, server.NewServer(st, router))
+	pb.RegisterUserServiceServer(grpcServer, server.NewUserServer(st))
 
 	go func() {
 		log.Printf("pacepoker listening on %s", *addr)

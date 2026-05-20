@@ -7,9 +7,9 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// apply returns a new GameState with the event applied. The input state is
-// never mutated. apply is a pure function: same inputs → same output.
-func apply(state *pb.GameState, evt *pb.GameEvent) *pb.GameState {
+// Apply returns a new GameState with the event applied. The input state is
+// never mutated. Apply is a pure function: same inputs → same output.
+func Apply(state *pb.GameState, evt *pb.GameEvent) *pb.GameState {
 	next := proto.Clone(state).(*pb.GameState)
 	if v := evt.GetStateVersion(); v > 0 {
 		next.Version = v
@@ -546,7 +546,7 @@ func apply(state *pb.GameState, evt *pb.GameEvent) *pb.GameState {
 // applyAll applies a sequence of events in order, returning the final state.
 func applyAll(state *pb.GameState, events []*pb.GameEvent) *pb.GameState {
 	for _, evt := range events {
-		state = apply(state, evt)
+		state = Apply(state, evt)
 	}
 	return state
 }

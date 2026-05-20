@@ -17,13 +17,25 @@ type Querier interface {
 	// Bulk variant for when a single command produces multiple events.
 	// Uses pgx's COPY FROM for speed. Atomicity is guaranteed by wrapping in a transaction.
 	AppendGameEvents(ctx context.Context, arg []AppendGameEventsParams) (int64, error)
+	ApplyDepositToSnapshot(ctx context.Context, arg ApplyDepositToSnapshotParams) (UserSnapshot, error)
+	CountDepositReports(ctx context.Context, userID uuid.UUID) (int64, error)
 	CountSearchGameConfigs(ctx context.Context, arg CountSearchGameConfigsParams) (int64, error)
 	CreateGameConfig(ctx context.Context, arg CreateGameConfigParams) (GameConfig, error)
 	CreateSnapshot(ctx context.Context, arg CreateSnapshotParams) (GameSnapshot, error)
+	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
+	CreateUserSnapshot(ctx context.Context, userID uuid.UUID) (UserSnapshot, error)
+	// For cash-out (returning chips when a user leaves a table).
+	CreditUserBalance(ctx context.Context, arg CreditUserBalanceParams) (UserSnapshot, error)
+	// For buy-ins when a user joins a table. Atomic insufficient-funds check:
+	// if balance < amount the WHERE clause matches nothing and ErrNoRows is returned.
+	DebitUserBalance(ctx context.Context, arg DebitUserBalanceParams) (UserSnapshot, error)
 	// Snapshot pruning. Keep N most recent snapshots per game.
 	DeleteSnapshotsBefore(ctx context.Context, arg DeleteSnapshotsBeforeParams) error
+	FindDepositReportByReportID(ctx context.Context, arg FindDepositReportByReportIDParams) (StepDepositReport, error)
 	// Idempotency check: was this command already processed?
 	FindEventByCommandID(ctx context.Context, causedByCommandID uuid.NullUUID) (GameEvent, error)
+	// Row-level lock for the deposit transaction.
+	GetDailyStepsForUpdate(ctx context.Context, arg GetDailyStepsForUpdateParams) (UserDailyStep, error)
 	GetEventsForGame(ctx context.Context, arg GetEventsForGameParams) ([]GameEvent, error)
 	GetEventsForHand(ctx context.Context, handID uuid.NullUUID) ([]GameEvent, error)
 	GetGameConfig(ctx context.Context, gameID uuid.UUID) (GameConfig, error)
@@ -32,13 +44,25 @@ type Querier interface {
 	// For replay: find the most recent snapshot at or before a target sequence.
 	GetSnapshotAtOrBefore(ctx context.Context, arg GetSnapshotAtOrBeforeParams) (GameSnapshot, error)
 	GetUnpublishedEvents(ctx context.Context, limit int32) ([]GameEvent, error)
+	GetUser(ctx context.Context, id uuid.UUID) (User, error)
+	GetUserByExternalID(ctx context.Context, externalID *string) (User, error)
+	GetUserSnapshot(ctx context.Context, userID uuid.UUID) (UserSnapshot, error)
+	GetUserSnapshotForUpdate(ctx context.Context, userID uuid.UUID) (UserSnapshot, error)
+	// Records the audit row. Returns the inserted row; on conflict (duplicate
+	// report_id) the DO NOTHING clause fires and nothing is returned.
+	InsertDepositReport(ctx context.Context, arg InsertDepositReportParams) (StepDepositReport, error)
 	ListActiveGameConfigs(ctx context.Context, arg ListActiveGameConfigsParams) ([]GameConfig, error)
+	ListDepositReports(ctx context.Context, arg ListDepositReportsParams) ([]StepDepositReport, error)
 	MarkEventsPublished(ctx context.Context, dollar_1 []int64) error
 	// Lobby search. All filters are optional and AND-combined.
 	// Filtering on denormalized columns rather than decoding config_proto.
 	// Sentinels: name_query='' means no name filter; 0 means no numeric filter.
 	SearchGameConfigs(ctx context.Context, arg SearchGameConfigsParams) ([]SearchGameConfigsRow, error)
 	SoftDeleteGameConfig(ctx context.Context, gameID uuid.UUID) error
+	SumCreditedToday(ctx context.Context, arg SumCreditedTodayParams) (int64, error)
+	UpdateUserSettings(ctx context.Context, arg UpdateUserSettingsParams) (User, error)
+	// Atomically update only if the new value is higher.
+	UpsertDailyStepsHighWaterMark(ctx context.Context, arg UpsertDailyStepsHighWaterMarkParams) (UserDailyStep, error)
 }
 
 var _ Querier = (*Queries)(nil)

@@ -21,9 +21,54 @@ import (
 var (
 	// ErrConcurrentWrite is returned when an event insert violates the
 	// UNIQUE (game_id, sequence) constraint — the OCC failure signal.
-	ErrConcurrentWrite = errors.New("store: concurrent write detected (sequence already exists)")
-	ErrNotFound        = errors.New("store: not found")
+	ErrConcurrentWrite     = errors.New("store: concurrent write detected (sequence already exists)")
+	ErrNotFound            = errors.New("store: not found")
+	ErrInsufficientBalance = errors.New("store: insufficient chip balance")
+	ErrDuplicateExternalID = errors.New("store: external_id already in use")
+
+	// Lobby join/leave errors.
+	ErrInsufficientFunds = errors.New("store: insufficient funds for buy-in")
+	ErrSeatTaken         = errors.New("store: seat already taken")
+	ErrBuyInOutOfRange   = errors.New("store: buy-in out of range")
+	ErrGameClosed        = errors.New("store: game is not joinable")
+	ErrAlreadySeated     = errors.New("store: user is already at this table")
+	ErrTableFull         = errors.New("store: table is full (no seats available)")
+	ErrUserNotAtTable    = errors.New("store: user is not seated at this table")
 )
+
+// ── Lobby input / result types ────────────────────────────────────────────────
+// These live in the store package (no engine dependency) so that both the
+// lobby package and server package can reference them without import cycles.
+
+// JoinTableInput holds the parameters for an atomic join operation.
+type JoinTableInput struct {
+	CommandID uuid.UUID
+	GameID    uuid.UUID
+	UserID    uuid.UUID
+	Seat      int32 // 0 = auto-select the lowest available seat
+	BuyIn     int64
+}
+
+// JoinTableResult is returned on a successful join.
+type JoinTableResult struct {
+	GameState      *pb.GameState
+	NewSequence    uint64
+	UserNewBalance int64
+}
+
+// LeaveTableInput holds the parameters for an atomic leave operation.
+type LeaveTableInput struct {
+	CommandID uuid.UUID
+	GameID    uuid.UUID
+	UserID    uuid.UUID
+}
+
+// LeaveTableResult is returned on a successful leave.
+type LeaveTableResult struct {
+	GameState      *pb.GameState
+	CashOutAmount  int64
+	UserNewBalance int64
+}
 
 // GameConfigSummary is a lightweight projection of game_configs used for list/search.
 type GameConfigSummary struct {
@@ -78,6 +123,30 @@ type Store interface {
 
 	// Transactions
 	WithTx(ctx context.Context, fn func(Store) error) error
+
+	// ── Users ─────────────────────────────────────────────────────────────────
+
+	CreateUser(ctx context.Context, in UserInput) (User, UserSnapshot, error)
+	GetUser(ctx context.Context, userID uuid.UUID) (User, UserSnapshot, error)
+	GetUserByExternalID(ctx context.Context, externalID string) (User, UserSnapshot, error)
+	UpdateUserSettings(ctx context.Context, in UpdateUserSettingsInput) (User, error)
+
+	// ── Deposits ──────────────────────────────────────────────────────────────
+
+	ReportSteps(ctx context.Context, in ReportStepsInput) (ReportStepsResult, error)
+	ListDepositReports(ctx context.Context, userID uuid.UUID, limit, offset int32) ([]DepositReport, int64, error)
+	FindDepositReport(ctx context.Context, userID, reportID uuid.UUID) (*DepositReport, error)
+
+	// ── Balance (game integration) ────────────────────────────────────────────
+
+	// DebitUserBalance atomically deducts amount from the user's chip balance.
+	// Returns ErrInsufficientBalance if balance < amount.
+	DebitUserBalance(ctx context.Context, userID uuid.UUID, amount int64) (UserSnapshot, error)
+	// CreditUserBalance adds chips (e.g. on cash-out when leaving a table).
+	CreditUserBalance(ctx context.Context, userID uuid.UUID, amount int64) (UserSnapshot, error)
+
+	// GetUserSnapshot reads the current denormalized balance projection.
+	GetUserSnapshot(ctx context.Context, userID uuid.UUID) (UserSnapshot, error)
 }
 
 type pgStore struct {

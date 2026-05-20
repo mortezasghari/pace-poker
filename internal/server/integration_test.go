@@ -5,20 +5,37 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	pb "github.com/pacepoker/poker/gen/go/poker/v1"
 	"github.com/pacepoker/poker/internal/engine"
 	"github.com/pacepoker/poker/internal/server"
 	"github.com/pacepoker/poker/internal/store"
 	"github.com/pacepoker/poker/internal/testutil"
+	"google.golang.org/grpc/metadata"
 )
 
 func newIntegrationServer(t *testing.T) *server.Server {
+	t.Helper()
+	srv, _, _ := newIntegrationComponents(t)
+	return srv
+}
+
+// newIntegrationComponents returns the server, router, and store so tests that
+// need to inspect router state (e.g. ActiveSessionCount) can do so.
+func newIntegrationComponents(t *testing.T) (*server.Server, *engine.Router, store.Store) {
 	t.Helper()
 	pool := testutil.NewPostgresPool(t, "../../db/migrations")
 	st := store.New(pool)
 	router := engine.NewRouter(context.Background(), st, engine.RouterOptions{})
 	t.Cleanup(router.Close)
-	return server.NewServer(st, router)
+	return server.NewServer(st, router), router, st
+}
+
+// ctxWithPlayerID injects a player UUID into gRPC incoming metadata,
+// matching what authstub.go reads via the "x-player-id" key.
+func ctxWithPlayerID(playerID uuid.UUID) context.Context {
+	md := metadata.New(map[string]string{"x-player-id": playerID.String()})
+	return metadata.NewIncomingContext(context.Background(), md)
 }
 
 func validCfg() *pb.CashGameConfig {
@@ -338,5 +355,102 @@ func TestSearchTables_TableSummaryFields(t *testing.T) {
 	}
 	if tbl.CreatedAt == nil {
 		t.Error("expected non-nil created_at")
+	}
+}
+
+// ── JoinTable / LeaveTable invalidation ───────────────────────────────────────
+
+func TestServer_JoinTable_InvalidatesSession(t *testing.T) {
+	srv, router, st := newIntegrationComponents(t)
+	ctx := context.Background()
+
+	// Seed user with chips.
+	u, _, err := st.CreateUser(ctx, store.UserInput{DisplayName: "Alice"})
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if _, err := st.CreditUserBalance(ctx, u.ID, 5000); err != nil {
+		t.Fatalf("CreditUserBalance: %v", err)
+	}
+
+	// Create table.
+	resp, err := srv.CreateTable(ctx, &pb.CreateTableCommand{Config: validCfg()})
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+	gameID, _ := uuid.Parse(resp.State.GameId)
+
+	// Force-load a session into the router by submitting a (rejected) command.
+	_ , _ = router.Submit(ctx, gameID, u.ID.String(), &pb.PlayerCommand{
+		GameId:  resp.State.GameId,
+		Payload: &pb.PlayerCommand_Fold{Fold: &pb.FoldCommand{}},
+	})
+	if router.ActiveSessionCount() != 1 {
+		t.Fatalf("expected 1 active session before JoinTable, got %d", router.ActiveSessionCount())
+	}
+
+	// JoinTable should succeed and invalidate the session.
+	_, err = srv.JoinTable(ctxWithPlayerID(u.ID), &pb.JoinTableCommand{
+		GameId:    gameID.String(),
+		BuyIn:     5000,
+		CommandId: uuid.New().String(),
+	})
+	if err != nil {
+		t.Fatalf("JoinTable: %v", err)
+	}
+
+	if router.ActiveSessionCount() != 0 {
+		t.Errorf("expected 0 active sessions after JoinTable (Invalidate not called), got %d",
+			router.ActiveSessionCount())
+	}
+}
+
+func TestServer_LeaveTable_InvalidatesSession(t *testing.T) {
+	srv, router, st := newIntegrationComponents(t)
+	ctx := context.Background()
+
+	// Seed user.
+	u, _, err := st.CreateUser(ctx, store.UserInput{DisplayName: "Bob"})
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if _, err := st.CreditUserBalance(ctx, u.ID, 5000); err != nil {
+		t.Fatalf("CreditUserBalance: %v", err)
+	}
+
+	// Create table and join.
+	resp, _ := srv.CreateTable(ctx, &pb.CreateTableCommand{Config: validCfg()})
+	gameID, _ := uuid.Parse(resp.State.GameId)
+
+	_, err = srv.JoinTable(ctxWithPlayerID(u.ID), &pb.JoinTableCommand{
+		GameId:    gameID.String(),
+		BuyIn:     5000,
+		CommandId: uuid.New().String(),
+	})
+	if err != nil {
+		t.Fatalf("JoinTable: %v", err)
+	}
+
+	// Force-load a session.
+	_, _ = router.Submit(ctx, gameID, u.ID.String(), &pb.PlayerCommand{
+		GameId:  resp.State.GameId,
+		Payload: &pb.PlayerCommand_Fold{Fold: &pb.FoldCommand{}},
+	})
+	if router.ActiveSessionCount() != 1 {
+		t.Fatalf("expected 1 active session before LeaveTable, got %d", router.ActiveSessionCount())
+	}
+
+	// LeaveTable should succeed and invalidate the session.
+	_, err = srv.LeaveTable(ctxWithPlayerID(u.ID), &pb.LeaveTableCommand{
+		GameId:    gameID.String(),
+		CommandId: uuid.New().String(),
+	})
+	if err != nil {
+		t.Fatalf("LeaveTable: %v", err)
+	}
+
+	if router.ActiveSessionCount() != 0 {
+		t.Errorf("expected 0 active sessions after LeaveTable (Invalidate not called), got %d",
+			router.ActiveSessionCount())
 	}
 }

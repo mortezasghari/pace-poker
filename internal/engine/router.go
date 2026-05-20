@@ -178,6 +178,22 @@ func (r *Router) reapOnce() {
 	}
 }
 
+// Invalidate closes and removes the session for the given game, if one exists.
+// The next command for this game triggers a fresh state load from the store.
+// Called by the lobby after a join/leave that mutates state outside the session.
+func (r *Router) Invalidate(gameID uuid.UUID) {
+	r.mu.Lock()
+	sess, ok := r.sessions[gameID]
+	if ok {
+		delete(r.sessions, gameID)
+	}
+	r.mu.Unlock()
+
+	if ok {
+		sess.Close()
+	}
+}
+
 // ActiveSessionCount returns the number of sessions currently in memory.
 func (r *Router) ActiveSessionCount() int {
 	r.mu.RLock()

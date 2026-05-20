@@ -209,6 +209,50 @@ Rules for working in this layer:
 6. `DealerFactory` in `RouterOptions` defaults to `NewCryptoDealer`. Override in
    tests that need deterministic dealing.
 
+## Users and deposits
+
+**Proto:** `proto/poker/v1/user.proto` — `UserService` (6 RPCs).
+Generated Go in `gen/go/poker/v1/user.pb.go` and `user_grpc.pb.go`.
+
+**Service layer:** `internal/user/service.go`
+
+- `Service` embeds `UnimplementedUserServiceServer` and directly satisfies `pb.UserServiceServer`.
+- Constructor: `user.New(store.Store) *Service` (production); `user.NewWithClock(store.Store, Clock) *Service` (tests).
+- Converts timezone string → IANA location → local date for `ReportSteps`.
+- Limit clamping for `ListDepositReports`: ≤0 → 50, >200 → 200.
+
+**gRPC registration:** `internal/server/user_server.go` — `NewUserServer(store.Store) *user.Service`.
+Registered in `cmd/server/main.go`: `pb.RegisterUserServiceServer(grpcServer, server.NewUserServer(st))`.
+
+**Cumulative step model:**
+
+- Clients report today's *cumulative* step count (not a delta).
+- Server stores per `(user_id, local_date)` high-water mark; credits the delta.
+- Exchange rate: `store.StepsPerChip = 1` — change in one place to update the whole system.
+- Reasons stored in `step_deposit_reports.reason`: `NEW_DAY`, `INCREMENT`, `NO_OP_LOWER`,
+  `NO_OP_DUPLICATE_VALUE`, `CAP_EXCEEDED`, `CAP_PARTIAL`.
+
+**Idempotency:** `report_id` UUID per request. Duplicate → same result, no double-credit.
+`ON CONFLICT DO NOTHING` on `InsertDepositReport` + fallback fetch handles narrow concurrent race.
+
+**Daily cap:** `users.max_daily_deposit` (0 = uncapped). Checked via `SumCreditedToday` inside
+the deposit transaction.
+
+**Serialization:** `SELECT FOR UPDATE` on `user_daily_steps` for the user/day row prevents
+double-crediting under concurrent reports for the same user and date.
+
+**Snapshot table:** `user_snapshots` — denormalized balance projection. Updated in the same
+transaction as the deposit audit row. Read by buy-in/cash-out flows via `DebitUserBalance` /
+`CreditUserBalance`.
+
+**`Date` type:** `store.Date{Year, Month, Day}` with `DateOf(time.Time)` and `String()`.
+Avoids the heavy `cloud.google.com/go/civil` dependency.
+
+**Tests:**
+
+- `internal/store/users_test.go` — 19 integration test cases via testcontainers.
+- `internal/user/service_test.go` — unit tests with `fakeClock` and in-memory `fakeStore`.
+
 ## Known gaps (TODO before real money)
 
 - **Hand evaluator**: `endHandShowdown` awards each pot to the first non-folded player in
@@ -234,3 +278,49 @@ Rules for working in this layer:
 - Zero-stack players are auto-sat-out by `advanceIdle` before the next hand starts.
 - `ResumeCommand` is handled in `Session.handleResume` (session layer), not the engine.
   It checks `status == PAUSED` and runs advance after resuming.
+
+## Join/Leave atomicity
+
+Join and leave are **lobby-level operations, not session-routed.** They run as unary
+gRPC handlers (`JoinTable`, `LeaveTable`) in `internal/server/server.go`, implemented
+via `internal/lobby/join_leave.go`, inside a single Postgres transaction that spans
+the user wallet and the game event log.
+
+**Why a separate `internal/lobby` package:** `internal/engine` imports `internal/store`,
+so `internal/store` cannot import `internal/engine`. The lobby package can import both.
+
+**After a successful join or leave, `router.Invalidate(gameID)` is called.** The session
+is closed; the next command for that game reloads state from the store. This prevents
+the session's in-memory copy from drifting from persisted state.
+
+The lobby operations:
+
+- `lobby.JoinTable(ctx, store, JoinTableInput)`: debits user balance, selects seat,
+  appends `PlayerJoined` event, returns new state and balance.
+- `lobby.LeaveTable(ctx, store, LeaveTableInput)`: if player is in an active hand,
+  emits `PlayerFolded` (current_bet forfeited); emits `PlayerLeft` with
+  `cash_out_amount = remaining stack`; credits balance. Returns new state.
+
+**Idempotency:** both operations check `FindEventByCommandID` at the start of the
+transaction. Same `command_id` → return same result, no double debit/credit.
+
+**Concurrency:** `ErrConcurrentWrite` from the unique-sequence constraint is retried
+up to 3 times in the gRPC handler (`retryOnConcurrentWrite`). The same `command_id`
+makes retries idempotent.
+
+**Auto-fold on leave:** if `state.CurrentHand != nil && !player.IsFolded`, a
+`PlayerFolded` event is emitted before `PlayerLeft`. The `current_bet` stays in the
+pot (forfeited). The remaining `stack` is credited back to the user. The session
+advancer runs on the next command after reload.
+
+**Error mapping:** `mapLobbyError` in server.go maps store sentinel errors to gRPC
+status codes (FailedPrecondition, AlreadyExists, ResourceExhausted, etc.).
+
+**Input/result types** (`JoinTableInput`, `JoinTableResult`, `LeaveTableInput`,
+`LeaveTableResult`) live in `internal/store/store.go` to avoid import cycles.
+
+**Exported engine helpers** used by lobby:
+
+- `engine.Apply(state, event)` — renamed from unexported `apply`.
+- `engine.LoadState(ctx, store, gameID)` — snapshot + event replay.
+- `engine.BuildPlayerJoinedEvent(...)`, `BuildPlayerLeftEvent(...)`, `BuildAutoFoldEvent(...)`.

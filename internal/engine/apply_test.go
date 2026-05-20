@@ -45,7 +45,7 @@ func ptr(s string) *string { return &s }
 
 func mustApply(t *testing.T, state *pb.GameState, evt *pb.GameEvent) *pb.GameState {
 	t.Helper()
-	return apply(state, evt)
+	return Apply(state, evt)
 }
 
 // ── immutability ──────────────────────────────────────────────────────────────
@@ -54,10 +54,10 @@ func TestApply_DoesNotMutateInput(t *testing.T) {
 	state := baseState()
 	original := proto.Clone(state).(*pb.GameState)
 
-	apply(state, &pb.GameEvent{Event: &pb.GameEvent_TableClosed{TableClosed: &pb.TableClosed{}}})
+	Apply(state, &pb.GameEvent{Event: &pb.GameEvent_TableClosed{TableClosed: &pb.TableClosed{}}})
 
 	if !proto.Equal(state, original) {
-		t.Error("apply mutated the input state")
+		t.Error("Apply mutated the input state")
 	}
 }
 
@@ -496,7 +496,7 @@ func TestApply_VersionIncrements(t *testing.T) {
 	state := baseState()
 	state.Version = 5
 
-	next := apply(state, &pb.GameEvent{Event: &pb.GameEvent_TableClosed{TableClosed: &pb.TableClosed{}}})
+	next := Apply(state, &pb.GameEvent{Event: &pb.GameEvent_TableClosed{TableClosed: &pb.TableClosed{}}})
 	if next.Version != 6 {
 		t.Errorf("Version: got %d, want 6", next.Version)
 	}
@@ -506,7 +506,7 @@ func TestApply_StateVersionOverridesIncrement(t *testing.T) {
 	state := baseState()
 	state.Version = 5
 
-	next := apply(state, &pb.GameEvent{
+	next := Apply(state, &pb.GameEvent{
 		StateVersion: 100,
 		Event:        &pb.GameEvent_TableClosed{TableClosed: &pb.TableClosed{}},
 	})

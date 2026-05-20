@@ -258,7 +258,7 @@ func (s *Session) handleResume(ctx context.Context, state *pb.GameState, cmd *pb
 	resumeEvt := &pb.GameEvent{Event: &pb.GameEvent_TableResumed{TableResumed: &pb.TableResumed{}}}
 
 	// Apply resume, then drive the lifecycle forward.
-	curr := apply(state, resumeEvt)
+	curr := Apply(state, resumeEvt)
 	advEvts, err := runAdvance(curr, s.dealer)
 	if err != nil {
 		return nil, fmt.Errorf("advance after resume: %w", err)

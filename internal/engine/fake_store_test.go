@@ -157,3 +157,36 @@ func (f *fakeStore) GetSnapshotAtOrBefore(ctx context.Context, id uuid.UUID, seq
 	return nil, 0, store.ErrNotFound
 }
 func (f *fakeStore) WithTx(ctx context.Context, fn func(store.Store) error) error { return fn(f) }
+
+// ── User / deposit stubs (unused by engine tests) ─────────────────────────────
+
+func (f *fakeStore) CreateUser(_ context.Context, _ store.UserInput) (store.User, store.UserSnapshot, error) {
+	return store.User{}, store.UserSnapshot{}, store.ErrNotFound
+}
+func (f *fakeStore) GetUser(_ context.Context, _ uuid.UUID) (store.User, store.UserSnapshot, error) {
+	return store.User{}, store.UserSnapshot{}, store.ErrNotFound
+}
+func (f *fakeStore) GetUserByExternalID(_ context.Context, _ string) (store.User, store.UserSnapshot, error) {
+	return store.User{}, store.UserSnapshot{}, store.ErrNotFound
+}
+func (f *fakeStore) UpdateUserSettings(_ context.Context, _ store.UpdateUserSettingsInput) (store.User, error) {
+	return store.User{}, store.ErrNotFound
+}
+func (f *fakeStore) ReportSteps(_ context.Context, _ store.ReportStepsInput) (store.ReportStepsResult, error) {
+	return store.ReportStepsResult{}, store.ErrNotFound
+}
+func (f *fakeStore) ListDepositReports(_ context.Context, _ uuid.UUID, _, _ int32) ([]store.DepositReport, int64, error) {
+	return nil, 0, nil
+}
+func (f *fakeStore) FindDepositReport(_ context.Context, _, _ uuid.UUID) (*store.DepositReport, error) {
+	return nil, store.ErrNotFound
+}
+func (f *fakeStore) DebitUserBalance(_ context.Context, _ uuid.UUID, _ int64) (store.UserSnapshot, error) {
+	return store.UserSnapshot{}, store.ErrNotFound
+}
+func (f *fakeStore) CreditUserBalance(_ context.Context, _ uuid.UUID, _ int64) (store.UserSnapshot, error) {
+	return store.UserSnapshot{}, store.ErrNotFound
+}
+func (f *fakeStore) GetUserSnapshot(_ context.Context, _ uuid.UUID) (store.UserSnapshot, error) {
+	return store.UserSnapshot{}, store.ErrNotFound
+}

@@ -13,12 +13,17 @@ import (
 // ── fakeSubmitter ─────────────────────────────────────────────────────────────
 
 type fakeSubmitter struct {
-	events []*pb.GameEvent
-	err    error
+	events           []*pb.GameEvent
+	err              error
+	invalidateCalled []uuid.UUID
 }
 
 func (f *fakeSubmitter) Submit(_ context.Context, _ uuid.UUID, _ string, _ *pb.PlayerCommand) ([]*pb.GameEvent, error) {
 	return f.events, f.err
+}
+
+func (f *fakeSubmitter) Invalidate(gameID uuid.UUID) {
+	f.invalidateCalled = append(f.invalidateCalled, gameID)
 }
 
 // ── fakePlayStream ────────────────────────────────────────────────────────────

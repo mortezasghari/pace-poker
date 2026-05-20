@@ -1,0 +1,103 @@
+syntax = "proto3";
+
+package poker.v1;
+
+option go_package = "github.com/pacepoker/poker/gen/go/poker/v1;pokerv1";
+
+import "google/protobuf/timestamp.proto";
+
+service UserService {
+  rpc CreateUser(CreateUserRequest)               returns (CreateUserResponse);
+  rpc GetUser(GetUserRequest)                     returns (GetUserResponse);
+  rpc UpdateUserSettings(UpdateUserSettingsRequest) returns (UpdateUserSettingsResponse);
+
+  // ReportSteps is the deposit endpoint. The client reports today's cumulative
+  // step count. The server credits the delta vs the high-water mark for the
+  // user's current local date. Idempotent via report_id.
+  rpc ReportSteps(ReportStepsRequest)             returns (ReportStepsResponse);
+
+  rpc GetUserSnapshot(GetUserSnapshotRequest)     returns (GetUserSnapshotResponse);
+
+  // Audit / debugging: list a user's recent deposit reports.
+  rpc ListDepositReports(ListDepositReportsRequest) returns (ListDepositReportsResponse);
+}
+
+message User {
+  string                    id               = 1;
+  string                    display_name     = 2;
+  string                    external_id      = 3;  // empty when unset
+  string                    timezone         = 4;  // IANA name, e.g. "America/New_York"
+  int64                     max_daily_deposit = 5; // 0 = uncapped
+  google.protobuf.Timestamp created_at       = 6;
+}
+
+message UserSnapshot {
+  string                    user_id          = 1;
+  int64                     chip_balance     = 2;
+  int64                     total_deposited  = 3;
+  int64                     total_reports    = 4;
+  google.protobuf.Timestamp last_deposit_at  = 5;  // unset if never deposited
+  google.protobuf.Timestamp last_activity_at = 6;
+}
+
+message CreateUserRequest {
+  string user_id           = 1;  // client-supplied UUID; empty = server generates
+  string display_name      = 2;
+  string external_id       = 3;  // optional
+  string timezone          = 4;  // optional; defaults to UTC
+  int64  max_daily_deposit = 5;  // optional; 0 = uncapped
+}
+message CreateUserResponse {
+  User         user     = 1;
+  UserSnapshot snapshot = 2;
+}
+
+message GetUserRequest  { string user_id = 1; }
+message GetUserResponse {
+  User         user     = 1;
+  UserSnapshot snapshot = 2;
+}
+
+message UpdateUserSettingsRequest {
+  string user_id            = 1;
+  string display_name       = 2;  // empty = no change
+  string timezone           = 3;  // empty = no change
+  int64  max_daily_deposit  = 4;  // negative = no change; 0 = uncapped; positive = set cap
+}
+message UpdateUserSettingsResponse { User user = 1; }
+
+message ReportStepsRequest {
+  string                    user_id                = 1;
+  string                    report_id              = 2;  // client UUID — idempotency key
+  int64                     cumulative_steps_today = 3;  // today's total, NOT an increment
+  google.protobuf.Timestamp client_reported_at     = 4;  // when the client measured; informational
+}
+message ReportStepsResponse {
+  int64                     credited_chips   = 1;  // 0 if no-op or duplicate
+  int64                     new_balance      = 2;
+  int64                     daily_high_water = 3;  // updated max_steps for today
+  string                    reason           = 4;  // matches the reason column
+  google.protobuf.Timestamp processed_at     = 5;
+}
+
+message GetUserSnapshotRequest  { string user_id = 1; }
+message GetUserSnapshotResponse { UserSnapshot snapshot = 1; }
+
+message ListDepositReportsRequest {
+  string user_id = 1;
+  int32  limit   = 2;  // default 50, max 200
+  int32  offset  = 3;
+}
+message ListDepositReportsResponse {
+  repeated DepositReport reports     = 1;
+  int64                  total_count = 2;
+}
+
+message DepositReport {
+  string                    report_id      = 1;
+  int64                     reported_steps = 2;
+  int64                     credited_chips = 3;
+  string                    local_date     = 4;  // ISO 8601 date string "YYYY-MM-DD"
+  google.protobuf.Timestamp reported_at    = 5;
+  string                    reason         = 6;
+}

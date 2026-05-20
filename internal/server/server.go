@@ -2,11 +2,13 @@ package server
 
 import (
 	"context"
+	"errors"
 	"log"
 
 	"github.com/google/uuid"
 	pb "github.com/pacepoker/poker/gen/go/poker/v1"
 	"github.com/pacepoker/poker/internal/engine"
+	"github.com/pacepoker/poker/internal/lobby"
 	"github.com/pacepoker/poker/internal/store"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -15,6 +17,7 @@ import (
 // commandSubmitter is satisfied by *engine.Router. Extracted for testability.
 type commandSubmitter interface {
 	Submit(ctx context.Context, gameID uuid.UUID, actorPlayerID string, cmd *pb.PlayerCommand) ([]*pb.GameEvent, error)
+	Invalidate(gameID uuid.UUID)
 }
 
 // Server implements pb.PokerServiceServer.
@@ -105,12 +108,123 @@ func (s *Server) CancelSeatReservation(_ context.Context, _ *pb.CancelSeatReserv
 	return nil, status.Error(codes.Unimplemented, "CancelSeatReservation not implemented")
 }
 
-func (s *Server) JoinTable(_ context.Context, _ *pb.JoinTableCommand) (*pb.JoinTableResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "JoinTable not implemented")
+func (s *Server) JoinTable(ctx context.Context, req *pb.JoinTableCommand) (*pb.JoinTableResponse, error) {
+	gameID, err := uuid.Parse(req.GetGameId())
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid game_id: %v", err)
+	}
+	userIDStr := actorPlayerIDFromContext(ctx)
+	if userIDStr == "" {
+		return nil, status.Error(codes.Unauthenticated, "missing player id")
+	}
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid player_id: %v", err)
+	}
+	if req.GetBuyIn() <= 0 {
+		return nil, status.Error(codes.InvalidArgument, "buy_in must be positive")
+	}
+	if req.GetSeat() < 0 {
+		return nil, status.Error(codes.InvalidArgument, "seat must be >= 0 (0 = auto)")
+	}
+	cmdID, err := parseOrGenUUID(req.GetCommandId())
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid command_id: %v", err)
+	}
+
+	in := store.JoinTableInput{
+		CommandID: cmdID,
+		GameID:    gameID,
+		UserID:    userID,
+		Seat:      req.GetSeat(),
+		BuyIn:     req.GetBuyIn(),
+	}
+	var result *store.JoinTableResult
+	retryOnConcurrentWrite(ctx, 3, func() error {
+		result, err = lobby.JoinTable(ctx, s.store, in)
+		return err
+	})
+	if err != nil {
+		return nil, mapLobbyError(err)
+	}
+
+	s.router.Invalidate(gameID)
+	return &pb.JoinTableResponse{State: result.GameState}, nil
 }
 
-func (s *Server) LeaveTable(_ context.Context, _ *pb.LeaveTableCommand) (*pb.LeaveTableResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "LeaveTable not implemented")
+func (s *Server) LeaveTable(ctx context.Context, req *pb.LeaveTableCommand) (*pb.LeaveTableResponse, error) {
+	gameID, err := uuid.Parse(req.GetGameId())
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid game_id: %v", err)
+	}
+	userIDStr := actorPlayerIDFromContext(ctx)
+	if userIDStr == "" {
+		return nil, status.Error(codes.Unauthenticated, "missing player id")
+	}
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid player_id: %v", err)
+	}
+	cmdID, err := parseOrGenUUID(req.GetCommandId())
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid command_id: %v", err)
+	}
+
+	in := store.LeaveTableInput{
+		CommandID: cmdID,
+		GameID:    gameID,
+		UserID:    userID,
+	}
+	var result *store.LeaveTableResult
+	retryOnConcurrentWrite(ctx, 3, func() error {
+		result, err = lobby.LeaveTable(ctx, s.store, in)
+		return err
+	})
+	if err != nil {
+		return nil, mapLobbyError(err)
+	}
+
+	s.router.Invalidate(gameID)
+	return &pb.LeaveTableResponse{CashOutAmount: result.CashOutAmount}, nil
+}
+
+// retryOnConcurrentWrite calls fn up to maxAttempts times, retrying only on
+// ErrConcurrentWrite. The same command_id makes retries idempotent.
+func retryOnConcurrentWrite(ctx context.Context, maxAttempts int, fn func() error) {
+	for i := 0; i < maxAttempts; i++ {
+		if err := fn(); !errors.Is(err, store.ErrConcurrentWrite) {
+			return
+		}
+		if ctx.Err() != nil {
+			return
+		}
+	}
+}
+
+func mapLobbyError(err error) error {
+	switch {
+	case errors.Is(err, store.ErrInsufficientFunds):
+		return status.Error(codes.FailedPrecondition, "insufficient funds")
+	case errors.Is(err, store.ErrSeatTaken):
+		return status.Error(codes.FailedPrecondition, "seat already taken")
+	case errors.Is(err, store.ErrBuyInOutOfRange):
+		return status.Errorf(codes.InvalidArgument, "%v", err)
+	case errors.Is(err, store.ErrGameClosed):
+		return status.Error(codes.FailedPrecondition, "game is not joinable")
+	case errors.Is(err, store.ErrAlreadySeated):
+		return status.Error(codes.AlreadyExists, "user is already at this table")
+	case errors.Is(err, store.ErrTableFull):
+		return status.Error(codes.ResourceExhausted, "table is full")
+	case errors.Is(err, store.ErrUserNotAtTable):
+		return status.Error(codes.NotFound, "user is not at this table")
+	case errors.Is(err, store.ErrNotFound):
+		return status.Error(codes.NotFound, "game or user not found")
+	case errors.Is(err, store.ErrConcurrentWrite):
+		return status.Error(codes.Unavailable, "concurrent write conflict; retry")
+	default:
+		log.Printf("lobby error: %v", err)
+		return status.Error(codes.Internal, "internal error")
+	}
 }
 
 func (s *Server) JoinWaitingList(_ context.Context, _ *pb.JoinWaitingListCommand) (*pb.JoinWaitingListResponse, error) {
