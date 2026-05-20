@@ -58,6 +58,14 @@ func advanceIdle(state *pb.GameState, dlr Dealer) ([]*pb.GameEvent, error) {
 func advanceHand(state *pb.GameState, dlr Dealer, now time.Time) ([]*pb.GameEvent, error) {
 	h := state.CurrentHand
 
+	// If the acting player's deadline has passed, emit PlayerTimedOut and the
+	// default action (fold when there is a live bet; check otherwise).
+	if h.ActingPlayerId != nil && h.ActionDeadline != nil && !now.IsZero() {
+		if now.After(h.ActionDeadline.AsTime()) {
+			return timeoutAction(state)
+		}
+	}
+
 	// Uncontested: all but one player folded.
 	if nonFoldedCount(state) <= 1 {
 		return endHandUncontested(state)
@@ -75,6 +83,38 @@ func advanceHand(state *pb.GameState, dlr Dealer, now time.Time) ([]*pb.GameEven
 
 	// PendingActions not empty, no actor set yet → emit ActionStarted.
 	return startNextAction(state, now)
+}
+
+// timeoutAction emits PlayerTimedOut followed by the default action:
+// fold if there is a live bet the acting player has not yet matched; check otherwise.
+func timeoutAction(state *pb.GameState) ([]*pb.GameEvent, error) {
+	h := state.CurrentHand
+	pid := *h.ActingPlayerId
+	player := state.Players[pid]
+
+	defaultAction := "check"
+	if player != nil && h.CurrentHighestBet > player.GetCurrentBet() {
+		defaultAction = "fold"
+	}
+
+	timedOut := &pb.GameEvent{Event: &pb.GameEvent_PlayerTimedOut{
+		PlayerTimedOut: &pb.PlayerTimedOut{
+			PlayerId:      pid,
+			DefaultAction: defaultAction,
+		},
+	}}
+
+	var action *pb.GameEvent
+	if defaultAction == "fold" {
+		action = &pb.GameEvent{Event: &pb.GameEvent_PlayerFolded{
+			PlayerFolded: &pb.PlayerFolded{PlayerId: pid},
+		}}
+	} else {
+		action = &pb.GameEvent{Event: &pb.GameEvent_PlayerChecked{
+			PlayerChecked: &pb.PlayerChecked{PlayerId: pid},
+		}}
+	}
+	return []*pb.GameEvent{timedOut, action}, nil
 }
 
 // TODO(must-post-blind): before startNewHand, check MustPostBlind on each player and
@@ -275,13 +315,24 @@ func endHandUncontested(state *pb.GameState) ([]*pb.GameEvent, error) {
 }
 
 // endHandShowdown emits Showdown + SidePotCreated(s) + RakeTaken + PotAwarded(s) + HandEnded.
-// TODO(hand-evaluator): replace stub winner selection with real 5-card hand evaluator.
 // TODO(run-it-twice): check RunItTwiceAgreed and deal second board before showdown.
 func endHandShowdown(state *pb.GameState) ([]*pb.GameEvent, error) {
 	h := state.CurrentHand
 	nonFolded := nonFoldedPlayerIDs(state)
 	if len(nonFolded) == 0 {
 		return nil, nil
+	}
+
+	// Evaluate each non-folded player's best 5-card hand from hole cards + board.
+	board := boardCards(h)
+	evals := make(map[string]playerHandEval, len(nonFolded))
+	for _, pid := range nonFolded {
+		p := state.Players[pid]
+		if p == nil || p.HoleCard_1 == nil || p.HoleCard_2 == nil {
+			continue
+		}
+		r, five, desc := bestHand(*p.HoleCard_1, *p.HoleCard_2, board)
+		evals[pid] = playerHandEval{rank: r, bestFive: five, desc: desc}
 	}
 
 	pots := computePots(state)
@@ -315,15 +366,24 @@ func endHandShowdown(state *pb.GameState) ([]*pb.GameEvent, error) {
 		pots[0].amount -= rake
 	}
 
-	// Award each pot to the stub winner (first eligible non-folded in ActionOrder).
+	// Award each pot to the player(s) with the best hand among eligible players.
 	for _, p := range pots {
-		winner := firstEligibleInOrder(state, p.eligibleIDs)
-		if winner == "" || p.amount <= 0 {
+		if p.amount <= 0 {
 			continue
+		}
+		winners, bestFive, bestDesc := potWinners(evals, p.eligibleIDs, state)
+		if len(winners) == 0 {
+			continue
+		}
+		winHand := make([]byte, 5)
+		for i, c := range bestFive {
+			winHand[i] = byte(c)
 		}
 		events = append(events, &pb.GameEvent{Event: &pb.GameEvent_PotAwarded{PotAwarded: &pb.PotAwarded{
 			Amount:          p.amount,
-			WinnerPlayerIds: []string{winner},
+			WinnerPlayerIds: winners,
+			WinningHand:     winHand,
+			HandDescription: bestDesc,
 		}}})
 	}
 
@@ -333,8 +393,53 @@ func endHandShowdown(state *pb.GameState) ([]*pb.GameEvent, error) {
 	return events, nil
 }
 
-// TODO(timeout): if ActingPlayerId is set and ActionDeadline has passed, emit PlayerTimedOut
-// and apply a default action (fold if there's a bet, check otherwise).
+// potWinners returns the player(s) with the best hand among eligibleIDs.
+// Tied players all win (split pot). Falls back to firstEligibleInOrder when no
+// player has a recorded hand evaluation (e.g. test states without hole cards).
+func potWinners(evals map[string]playerHandEval, eligibleIDs []string, state *pb.GameState) ([]string, [5]uint32, string) {
+	var (
+		best      handRank
+		bestCards [5]uint32
+		bestDesc  string
+		winners   []string
+	)
+	for _, pid := range eligibleIDs {
+		ev, ok := evals[pid]
+		if !ok {
+			continue
+		}
+		if len(winners) == 0 || ev.rank > best {
+			best, bestCards, bestDesc = ev.rank, ev.bestFive, ev.desc
+			winners = []string{pid}
+		} else if ev.rank == best {
+			winners = append(winners, pid)
+		}
+	}
+	if len(winners) == 0 {
+		if w := firstEligibleInOrder(state, eligibleIDs); w != "" {
+			winners = []string{w}
+		}
+	}
+	return winners, bestCards, bestDesc
+}
+
+// boardCards returns the community cards currently on the board in deal order.
+func boardCards(h *pb.HandState) []uint32 {
+	if h == nil {
+		return nil
+	}
+	var board []uint32
+	if h.FlopCard_1 != nil {
+		board = append(board, *h.FlopCard_1, *h.FlopCard_2, *h.FlopCard_3)
+	}
+	if h.TurnCard != nil {
+		board = append(board, *h.TurnCard)
+	}
+	if h.RiverCard != nil {
+		board = append(board, *h.RiverCard)
+	}
+	return board
+}
 
 // startNextAction emits ActionStarted for the first player in PendingActions.
 func startNextAction(state *pb.GameState, now time.Time) ([]*pb.GameEvent, error) {

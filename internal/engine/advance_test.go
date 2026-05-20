@@ -6,6 +6,7 @@ import (
 
 	pb "github.com/pacepoker/poker/gen/go/poker/v1"
 	"github.com/pacepoker/poker/internal/deck"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // ── fixtures ──────────────────────────────────────────────────────────────────
@@ -500,5 +501,209 @@ func TestAdvance_DealerRotates_SecondHand(t *testing.T) {
 	secondDealer := afterHandEnd.CurrentHand.DealerPlayerId
 	if firstDealer == secondDealer {
 		t.Errorf("dealer did not rotate: both hands dealt by %s", firstDealer)
+	}
+}
+// ── tests: action timeout ─────────────────────────────────────────────────────
+
+func TestAdvance_Timeout_Folds_WhenBetActive(t *testing.T) {
+	// p1 is acting; there is a live bet (CurrentHighestBet=100, p1.CurrentBet=0).
+	// With an expired deadline, advance should emit PlayerTimedOut + PlayerFolded.
+	state := twoPlayerState()
+	state.Status = pb.GameStatus_GAME_STATUS_ACTIVE
+	actingID := "p1"
+	deadline := timestamppb.New(time.Now().Add(-1 * time.Second)) // already past
+	state.CurrentHand = &pb.HandState{
+		Phase:             pb.HandPhase_HAND_PHASE_PREFLOP,
+		Pot:               150,
+		CurrentHighestBet: 100,
+		ActionOrder:       []string{"p1", "p2"},
+		PendingActions:    []string{"p1"},
+		ActingPlayerId:    &actingID,
+		ActionDeadline:    deadline,
+	}
+	state.Players["p1"].CurrentBet = 0
+
+	batch, err := advance(state, fixedDealer(), time.Now())
+	if err != nil {
+		t.Fatalf("advance: %v", err)
+	}
+	if len(batch) != 2 {
+		t.Fatalf("expected 2 events (TimedOut + Folded), got %d", len(batch))
+	}
+	if _, ok := batch[0].Event.(*pb.GameEvent_PlayerTimedOut); !ok {
+		t.Errorf("event[0]: got %T, want PlayerTimedOut", batch[0].Event)
+	}
+	to := batch[0].GetPlayerTimedOut()
+	if to.GetPlayerId() != "p1" {
+		t.Errorf("TimedOut player: got %q, want p1", to.GetPlayerId())
+	}
+	if to.GetDefaultAction() != "fold" {
+		t.Errorf("DefaultAction: got %q, want fold", to.GetDefaultAction())
+	}
+	if _, ok := batch[1].Event.(*pb.GameEvent_PlayerFolded); !ok {
+		t.Errorf("event[1]: got %T, want PlayerFolded", batch[1].Event)
+	}
+}
+
+func TestAdvance_Timeout_Checks_WhenNoBet(t *testing.T) {
+	// p1 is acting; no live bet (CurrentHighestBet=0).
+	// Default action should be check.
+	state := twoPlayerState()
+	state.Status = pb.GameStatus_GAME_STATUS_ACTIVE
+	actingID := "p1"
+	deadline := timestamppb.New(time.Now().Add(-1 * time.Second))
+	state.CurrentHand = &pb.HandState{
+		Phase:          pb.HandPhase_HAND_PHASE_FLOP,
+		Pot:            200,
+		ActionOrder:    []string{"p1", "p2"},
+		PendingActions: []string{"p1"},
+		ActingPlayerId: &actingID,
+		ActionDeadline: deadline,
+	}
+	// No current bet outstanding.
+
+	batch, err := advance(state, fixedDealer(), time.Now())
+	if err != nil {
+		t.Fatalf("advance: %v", err)
+	}
+	if len(batch) != 2 {
+		t.Fatalf("expected 2 events (TimedOut + Checked), got %d", len(batch))
+	}
+	if _, ok := batch[0].Event.(*pb.GameEvent_PlayerTimedOut); !ok {
+		t.Errorf("event[0]: got %T, want PlayerTimedOut", batch[0].Event)
+	}
+	if batch[0].GetPlayerTimedOut().GetDefaultAction() != "check" {
+		t.Errorf("DefaultAction: got %q, want check", batch[0].GetPlayerTimedOut().GetDefaultAction())
+	}
+	if _, ok := batch[1].Event.(*pb.GameEvent_PlayerChecked); !ok {
+		t.Errorf("event[1]: got %T, want PlayerChecked", batch[1].Event)
+	}
+}
+
+func TestAdvance_NoTimeout_WhenDeadlineNotPassed(t *testing.T) {
+	// Deadline is in the future — advance must not fire the timeout.
+	state := twoPlayerState()
+	state.Status = pb.GameStatus_GAME_STATUS_ACTIVE
+	actingID := "p1"
+	deadline := timestamppb.New(time.Now().Add(30 * time.Second)) // future
+	state.CurrentHand = &pb.HandState{
+		Phase:             pb.HandPhase_HAND_PHASE_PREFLOP,
+		Pot:               150,
+		CurrentHighestBet: 100,
+		ActionOrder:       []string{"p1", "p2"},
+		PendingActions:    []string{"p1"},
+		ActingPlayerId:    &actingID,
+		ActionDeadline:    deadline,
+	}
+
+	batch, err := advance(state, fixedDealer(), time.Now())
+	if err != nil {
+		t.Fatalf("advance: %v", err)
+	}
+	// Still waiting for the player → nil.
+	if len(batch) != 0 {
+		t.Errorf("expected nil batch (deadline not passed), got %d events: %T", len(batch), batch[0].Event)
+	}
+}
+
+func TestAdvance_NoTimeout_WhenNowIsZero(t *testing.T) {
+	// now=zero disables timeout check even if deadline is past (used in tests).
+	state := twoPlayerState()
+	state.Status = pb.GameStatus_GAME_STATUS_ACTIVE
+	actingID := "p1"
+	deadline := timestamppb.New(time.Now().Add(-1 * time.Second))
+	state.CurrentHand = &pb.HandState{
+		Phase:             pb.HandPhase_HAND_PHASE_PREFLOP,
+		Pot:               150,
+		CurrentHighestBet: 100,
+		ActionOrder:       []string{"p1", "p2"},
+		PendingActions:    []string{"p1"},
+		ActingPlayerId:    &actingID,
+		ActionDeadline:    deadline,
+	}
+
+	batch, err := advance(state, fixedDealer(), time.Time{}) // zero time
+	if err != nil {
+		t.Fatalf("advance: %v", err)
+	}
+	if len(batch) != 0 {
+		t.Errorf("expected nil batch with zero now, got %d events", len(batch))
+	}
+}
+
+func TestAdvance_Timeout_ContinuesHandAfterFold(t *testing.T) {
+	// After p1 times out and folds, only p2 remains → pot awarded in same advance loop.
+	state := twoPlayerState()
+	state.Status = pb.GameStatus_GAME_STATUS_ACTIVE
+	actingID := "p1"
+	deadline := timestamppb.New(time.Now().Add(-1 * time.Second))
+	state.CurrentHand = &pb.HandState{
+		Phase:             pb.HandPhase_HAND_PHASE_PREFLOP,
+		Pot:               300,
+		CurrentHighestBet: 150,
+		ActionOrder:       []string{"p1", "p2"},
+		PendingActions:    []string{"p1"},
+		ActingPlayerId:    &actingID,
+		ActionDeadline:    deadline,
+	}
+	state.Players["p1"].CurrentBet = 0
+
+	// Use a real now so the expired deadline fires, then loop until quiescent.
+	// Stop at HandEnded so a subsequent auto-start doesn't overwrite finalState.
+	now := time.Now()
+	var all []*pb.GameEvent
+	cur := state
+	done := false
+	for range 64 {
+		batch, err := advance(cur, fixedDealer(), now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(batch) == 0 {
+			break
+		}
+		cur = applyAll(cur, batch)
+		all = append(all, batch...)
+		// After first batch (timeout+fold), subsequent calls use zero now so
+		// no second timeout fires — the loop just drives remaining lifecycle.
+		now = time.Time{}
+		for _, e := range batch {
+			if _, ok := e.Event.(*pb.GameEvent_HandEnded); ok {
+				done = true
+			}
+		}
+		if done {
+			break
+		}
+	}
+	finalState := cur
+
+	var timedOut, folded, potAwarded, handEnded bool
+	for _, e := range all {
+		switch e.Event.(type) {
+		case *pb.GameEvent_PlayerTimedOut:
+			timedOut = true
+		case *pb.GameEvent_PlayerFolded:
+			folded = true
+		case *pb.GameEvent_PotAwarded:
+			potAwarded = true
+		case *pb.GameEvent_HandEnded:
+			handEnded = true
+		}
+	}
+	if !timedOut {
+		t.Error("expected PlayerTimedOut event")
+	}
+	if !folded {
+		t.Error("expected PlayerFolded event")
+	}
+	if !potAwarded {
+		t.Error("expected PotAwarded event after uncontested")
+	}
+	if !handEnded {
+		t.Error("expected HandEnded event")
+	}
+	if finalState.CurrentHand != nil {
+		t.Error("hand should have ended")
 	}
 }

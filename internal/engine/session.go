@@ -160,6 +160,49 @@ func (s *Session) run(ctx context.Context, state *pb.GameState) {
 	idle := time.NewTimer(s.idleAfter)
 	defer idle.Stop()
 
+	// dlTimer fires when the acting player's action deadline expires so the
+	// session can advance proactively (emit PlayerTimedOut + default action)
+	// without waiting for the next incoming command.
+	var (
+		dlTimer *time.Timer
+		dlC     <-chan time.Time // nil when no active deadline
+	)
+	defer func() {
+		if dlTimer != nil {
+			dlTimer.Stop()
+		}
+	}()
+
+	// resetDeadline arms or disarms dlTimer based on the current state.
+	// Must be called after every state mutation.
+	resetDeadline := func() {
+		if dlTimer != nil {
+			if !dlTimer.Stop() {
+				select {
+				case <-dlTimer.C:
+				default:
+				}
+			}
+			dlTimer, dlC = nil, nil
+		}
+		h := state.CurrentHand
+		if h == nil || h.ActingPlayerId == nil || h.ActionDeadline == nil {
+			return
+		}
+		d := time.Until(h.ActionDeadline.AsTime())
+		if d <= 0 {
+			// Already expired; the lazy check in advance() handles it on
+			// the next command. No proactive timer needed.
+			return
+		}
+		dlTimer = time.NewTimer(d)
+		dlC = dlTimer.C
+	}
+
+	// Arm deadline timer for the initial state (session may be loaded from
+	// the store while a hand is already in progress).
+	resetDeadline()
+
 	for {
 		if !idle.Stop() {
 			select {
@@ -174,16 +217,44 @@ func (s *Session) run(ctx context.Context, state *pb.GameState) {
 			return
 		case <-idle.C:
 			return
+		case <-dlC:
+			// Deadline expired: advance proactively to emit PlayerTimedOut +
+			// default action and persist the results.
+			dlTimer, dlC = nil, nil
+			events, err := s.runProactiveAdvance(ctx, state)
+			if err == nil && len(events) > 0 {
+				state = applyAll(state, events)
+			}
+			resetDeadline()
 		case env := <-s.inbox:
 			events, err := s.process(ctx, state, env.actor, env.cmd)
 			if err == nil {
 				state = applyAll(state, events)
 			}
 			env.reply <- result{events: events, err: err}
+			resetDeadline()
 		case replyCh := <-s.testStateCh:
 			replyCh <- state
 		}
 	}
+}
+
+// runProactiveAdvance drives the lifecycle forward without a client command
+// (e.g. after an action deadline fires). Events are stamped and persisted
+// exactly like command-driven events. CausedByCommandId is left empty, which
+// is correct for server-initiated events per the proto definition.
+func (s *Session) runProactiveAdvance(ctx context.Context, state *pb.GameState) ([]*pb.GameEvent, error) {
+	events, err := runAdvance(state, s.dealer)
+	if err != nil || len(events) == 0 {
+		return nil, err
+	}
+	if err := s.stampEvents(ctx, events); err != nil {
+		return nil, fmt.Errorf("stamp proactive advance: %w", err)
+	}
+	if err := s.store.AppendEvents(ctx, events); err != nil {
+		return nil, fmt.Errorf("persist proactive advance: %w", err)
+	}
+	return events, nil
 }
 
 // process handles one command:
