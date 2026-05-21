@@ -11,6 +11,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	pb "github.com/pacepoker/poker/gen/go/poker/v1"
+	"github.com/pacepoker/poker/internal/auth"
+	"github.com/pacepoker/poker/internal/config"
 	"github.com/pacepoker/poker/internal/engine"
 	"github.com/pacepoker/poker/internal/server"
 	"github.com/pacepoker/poker/internal/store"
@@ -39,13 +41,29 @@ func main() {
 	router := engine.NewRouter(ctx, st, engine.RouterOptions{})
 	defer router.Close()
 
+	authCfg, err := config.LoadAuth0FromEnv()
+	if err != nil {
+		log.Fatalf("load auth0 config: %v", err)
+	}
+	cache, err := auth.NewUserCache(10_000)
+	if err != nil {
+		log.Fatalf("init user cache: %v", err)
+	}
+	authenticator, err := auth.NewAuthenticator(authCfg, st, cache)
+	if err != nil {
+		log.Fatalf("init authenticator: %v", err)
+	}
+
 	lis, err := net.Listen("tcp", *addr)
 	if err != nil {
 		log.Fatalf("listen %s: %v", *addr, err)
 	}
 
-	grpcServer := grpc.NewServer()
-	pb.RegisterPokerServiceServer(grpcServer, server.NewServer(st, router))
+	grpcServer := grpc.NewServer(
+		grpc.ChainUnaryInterceptor(authenticator.UnaryInterceptor()),
+		grpc.ChainStreamInterceptor(authenticator.StreamInterceptor()),
+	)
+	pb.RegisterPokerServiceServer(grpcServer, server.NewServer(st, router, authenticator))
 	pb.RegisterUserServiceServer(grpcServer, server.NewUserServer(st))
 
 	go func() {

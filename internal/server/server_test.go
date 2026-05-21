@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	pb "github.com/pacepoker/poker/gen/go/poker/v1"
+	"github.com/pacepoker/poker/internal/auth"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -56,6 +57,13 @@ func (f *fakePlayStream) SetTrailer(metadata.MD)           {}
 func (f *fakePlayStream) SendMsg(any) error                { return nil }
 func (f *fakePlayStream) RecvMsg(any) error                { return nil }
 
+// ── fixed test UUIDs ─────────────────────────────────────────────────────────
+
+var (
+	aliceID = uuid.MustParse("aaaaaaaa-0000-0000-0000-000000000001")
+	bobID   = uuid.MustParse("bbbbbbbb-0000-0000-0000-000000000002")
+)
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func holeCardsRevealedEvent(playerID string) *pb.GameEvent {
@@ -89,6 +97,8 @@ func potAwardedEvent() *pb.GameEvent {
 // ── shouldSuppressFromActor ───────────────────────────────────────────────────
 
 func TestShouldSuppressFromActor(t *testing.T) {
+	aliceStr := aliceID.String()
+	bobStr := bobID.String()
 	tests := []struct {
 		name      string
 		ev        *pb.GameEvent
@@ -97,31 +107,31 @@ func TestShouldSuppressFromActor(t *testing.T) {
 	}{
 		{
 			name:      "HoleCardsRevealed for self — not suppressed",
-			ev:        holeCardsRevealedEvent("alice"),
-			actor:     "alice",
+			ev:        holeCardsRevealedEvent(aliceStr),
+			actor:     aliceStr,
 			wantSuppr: false,
 		},
 		{
 			name:      "HoleCardsRevealed for opponent — suppressed",
-			ev:        holeCardsRevealedEvent("bob"),
-			actor:     "alice",
+			ev:        holeCardsRevealedEvent(bobStr),
+			actor:     aliceStr,
 			wantSuppr: true,
 		},
 		{
 			name:      "HoleCardsDealt (broadcast) — never suppressed",
-			ev:        holeCardsDealtEvent("bob"),
-			actor:     "alice",
+			ev:        holeCardsDealtEvent(bobStr),
+			actor:     aliceStr,
 			wantSuppr: false,
 		},
 		{
 			name:      "PotAwarded — never suppressed",
 			ev:        potAwardedEvent(),
-			actor:     "alice",
+			actor:     aliceStr,
 			wantSuppr: false,
 		},
 		{
 			name:      "HoleCardsRevealed empty actor — suppressed when player id is non-empty",
-			ev:        holeCardsRevealedEvent("bob"),
+			ev:        holeCardsRevealedEvent(bobStr),
 			actor:     "",
 			wantSuppr: true,
 		},
@@ -139,35 +149,35 @@ func TestShouldSuppressFromActor(t *testing.T) {
 
 // ── PlaySession filtering ─────────────────────────────────────────────────────
 
-func newPlaySession(actor string, sub commandSubmitter, cmds []*pb.PlayerCommand) (*Server, *fakePlayStream) {
+func newPlaySession(actorID uuid.UUID, sub CommandSubmitter, cmds []*pb.PlayerCommand) (*Server, *fakePlayStream) {
 	s := &Server{router: sub}
 	stream := &fakePlayStream{
-		ctx:  contextWithActor(context.Background(), actor),
+		ctx:  contextWithActor(context.Background(), actorID),
 		cmds: cmds,
 	}
 	return s, stream
 }
 
-// contextWithActor injects the player ID via gRPC metadata, matching authstub.go.
-func contextWithActor(ctx context.Context, playerID string) context.Context {
-	md := metadata.New(map[string]string{"x-player-id": playerID})
-	return metadata.NewIncomingContext(ctx, md)
+// contextWithActor injects a Principal into the context, simulating what the
+// auth interceptor does for real requests.
+func contextWithActor(ctx context.Context, actorID uuid.UUID) context.Context {
+	return auth.WithPrincipal(ctx, auth.Principal{UserID: actorID})
 }
 
 func TestPlaySession_FiltersOpponentHoleCards(t *testing.T) {
 	gameID := uuid.New().String()
 	sub := &fakeSubmitter{
 		events: []*pb.GameEvent{
-			holeCardsDealtEvent("alice"),   // broadcast — alice gets this
-			holeCardsRevealedEvent("alice"), // alice's own cards — alice gets this
-			holeCardsDealtEvent("bob"),     // broadcast — alice gets this
-			holeCardsRevealedEvent("bob"),  // bob's cards — alice must NOT get this
-			potAwardedEvent(),              // broadcast — alice gets this
+			holeCardsDealtEvent(aliceID.String()),   // broadcast — alice gets this
+			holeCardsRevealedEvent(aliceID.String()), // alice's own cards — alice gets this
+			holeCardsDealtEvent(bobID.String()),     // broadcast — alice gets this
+			holeCardsRevealedEvent(bobID.String()),  // bob's cards — alice must NOT get this
+			potAwardedEvent(),                       // broadcast — alice gets this
 		},
 	}
 
 	cmd := &pb.PlayerCommand{GameId: gameID}
-	s, stream := newPlaySession("alice", sub, []*pb.PlayerCommand{cmd})
+	s, stream := newPlaySession(aliceID, sub, []*pb.PlayerCommand{cmd})
 
 	if err := s.PlaySession(stream); err != nil {
 		t.Fatalf("PlaySession error: %v", err)
@@ -180,7 +190,7 @@ func TestPlaySession_FiltersOpponentHoleCards(t *testing.T) {
 
 	for _, ev := range stream.sent {
 		if r, ok := ev.Event.(*pb.GameEvent_HoleCardsRevealed); ok {
-			if r.HoleCardsRevealed.GetPlayerId() != "alice" {
+			if r.HoleCardsRevealed.GetPlayerId() != aliceID.String() {
 				t.Errorf("alice received HoleCardsRevealed for player %q", r.HoleCardsRevealed.GetPlayerId())
 			}
 		}
@@ -191,12 +201,12 @@ func TestPlaySession_ReceivesOwnHoleCards(t *testing.T) {
 	gameID := uuid.New().String()
 	sub := &fakeSubmitter{
 		events: []*pb.GameEvent{
-			holeCardsRevealedEvent("alice"),
+			holeCardsRevealedEvent(aliceID.String()),
 		},
 	}
 
 	cmd := &pb.PlayerCommand{GameId: gameID}
-	s, stream := newPlaySession("alice", sub, []*pb.PlayerCommand{cmd})
+	s, stream := newPlaySession(aliceID, sub, []*pb.PlayerCommand{cmd})
 
 	if err := s.PlaySession(stream); err != nil {
 		t.Fatalf("PlaySession error: %v", err)
@@ -209,7 +219,7 @@ func TestPlaySession_ReceivesOwnHoleCards(t *testing.T) {
 	if !ok {
 		t.Fatal("expected HoleCardsRevealed")
 	}
-	if r.HoleCardsRevealed.GetPlayerId() != "alice" {
+	if r.HoleCardsRevealed.GetPlayerId() != aliceID.String() {
 		t.Errorf("wrong player id: %q", r.HoleCardsRevealed.GetPlayerId())
 	}
 }
@@ -219,13 +229,13 @@ func TestPlaySession_NonHoleCardEventsPassThrough(t *testing.T) {
 	sub := &fakeSubmitter{
 		events: []*pb.GameEvent{
 			potAwardedEvent(),
-			holeCardsDealtEvent("bob"),
-			holeCardsDealtEvent("alice"),
+			holeCardsDealtEvent(bobID.String()),
+			holeCardsDealtEvent(aliceID.String()),
 		},
 	}
 
 	cmd := &pb.PlayerCommand{GameId: gameID}
-	s, stream := newPlaySession("alice", sub, []*pb.PlayerCommand{cmd})
+	s, stream := newPlaySession(aliceID, sub, []*pb.PlayerCommand{cmd})
 
 	if err := s.PlaySession(stream); err != nil {
 		t.Fatalf("PlaySession error: %v", err)

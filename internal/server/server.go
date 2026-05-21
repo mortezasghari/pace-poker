@@ -7,15 +7,16 @@ import (
 
 	"github.com/google/uuid"
 	pb "github.com/pacepoker/poker/gen/go/poker/v1"
-	"github.com/pacepoker/poker/internal/engine"
+	"github.com/pacepoker/poker/internal/auth"
 	"github.com/pacepoker/poker/internal/lobby"
 	"github.com/pacepoker/poker/internal/store"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-// commandSubmitter is satisfied by *engine.Router. Extracted for testability.
-type commandSubmitter interface {
+// CommandSubmitter is satisfied by *engine.Router. Exported so integration
+// tests can inject a fake router without depending on the concrete type.
+type CommandSubmitter interface {
 	Submit(ctx context.Context, gameID uuid.UUID, actorPlayerID string, cmd *pb.PlayerCommand) ([]*pb.GameEvent, error)
 	Invalidate(gameID uuid.UUID)
 }
@@ -24,12 +25,13 @@ type commandSubmitter interface {
 type Server struct {
 	pb.UnimplementedPokerServiceServer
 	store  store.Store
-	router commandSubmitter
+	router CommandSubmitter
+	auth   *auth.Authenticator
 }
 
-// NewServer returns a Server wired to the given store and router.
-func NewServer(st store.Store, router *engine.Router) *Server {
-	return &Server{store: st, router: router}
+// NewServer returns a Server wired to the given store, router, and authenticator.
+func NewServer(st store.Store, router CommandSubmitter, a *auth.Authenticator) *Server {
+	return &Server{store: st, router: router, auth: a}
 }
 
 // ── Lobby ─────────────────────────────────────────────────────────────────────
@@ -113,13 +115,9 @@ func (s *Server) JoinTable(ctx context.Context, req *pb.JoinTableCommand) (*pb.J
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid game_id: %v", err)
 	}
-	userIDStr := actorPlayerIDFromContext(ctx)
-	if userIDStr == "" {
-		return nil, status.Error(codes.Unauthenticated, "missing player id")
-	}
-	userID, err := uuid.Parse(userIDStr)
+	userID, err := actorFromContext(ctx)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid player_id: %v", err)
+		return nil, err
 	}
 	if req.GetBuyIn() <= 0 {
 		return nil, status.Error(codes.InvalidArgument, "buy_in must be positive")
@@ -157,13 +155,9 @@ func (s *Server) LeaveTable(ctx context.Context, req *pb.LeaveTableCommand) (*pb
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid game_id: %v", err)
 	}
-	userIDStr := actorPlayerIDFromContext(ctx)
-	if userIDStr == "" {
-		return nil, status.Error(codes.Unauthenticated, "missing player id")
-	}
-	userID, err := uuid.Parse(userIDStr)
+	userID, err := actorFromContext(ctx)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid player_id: %v", err)
+		return nil, err
 	}
 	cmdID, err := parseOrGenUUID(req.GetCommandId())
 	if err != nil {

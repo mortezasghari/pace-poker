@@ -8,10 +8,16 @@ import (
 )
 
 // PlaySession drives the bidi-streaming PlaySession RPC.
-// Commands are routed through the engine.Router; events are streamed back.
+// The actor identity is extracted once at stream open and reused for every
+// command — a long-lived stream always acts as the same authenticated user.
 func (s *Server) PlaySession(stream pb.PokerService_PlaySessionServer) error {
 	ctx := stream.Context()
-	actor := actorPlayerIDFromContext(ctx)
+	actorID, err := actorFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	actorStr := actorID.String()
+
 	for {
 		cmd, err := stream.Recv()
 		if err == io.EOF {
@@ -29,7 +35,7 @@ func (s *Server) PlaySession(stream pb.PokerService_PlaySessionServer) error {
 			continue
 		}
 
-		events, err := s.router.Submit(ctx, gameID, actor, cmd)
+		events, err := s.router.Submit(ctx, gameID, actorStr, cmd)
 		if err != nil {
 			if sendErr := stream.Send(buildRejection(cmd, "INTERNAL", err.Error())); sendErr != nil {
 				return sendErr
@@ -38,7 +44,7 @@ func (s *Server) PlaySession(stream pb.PokerService_PlaySessionServer) error {
 		}
 
 		for _, ev := range events {
-			if shouldSuppressFromActor(ev, actor) {
+			if shouldSuppressFromActor(ev, actorStr) {
 				continue
 			}
 			if err := stream.Send(ev); err != nil {

@@ -7,11 +7,11 @@ import (
 
 	"github.com/google/uuid"
 	pb "github.com/pacepoker/poker/gen/go/poker/v1"
+	"github.com/pacepoker/poker/internal/auth"
 	"github.com/pacepoker/poker/internal/engine"
 	"github.com/pacepoker/poker/internal/server"
 	"github.com/pacepoker/poker/internal/store"
 	"github.com/pacepoker/poker/internal/testutil"
-	"google.golang.org/grpc/metadata"
 )
 
 func newIntegrationServer(t *testing.T) *server.Server {
@@ -28,14 +28,13 @@ func newIntegrationComponents(t *testing.T) (*server.Server, *engine.Router, sto
 	st := store.New(pool)
 	router := engine.NewRouter(context.Background(), st, engine.RouterOptions{})
 	t.Cleanup(router.Close)
-	return server.NewServer(st, router), router, st
+	return server.NewServer(st, router, nil), router, st
 }
 
-// ctxWithPlayerID injects a player UUID into gRPC incoming metadata,
-// matching what authstub.go reads via the "x-player-id" key.
+// ctxWithPlayerID injects a Principal into the context, simulating what the
+// auth interceptor does for real requests.
 func ctxWithPlayerID(playerID uuid.UUID) context.Context {
-	md := metadata.New(map[string]string{"x-player-id": playerID.String()})
-	return metadata.NewIncomingContext(context.Background(), md)
+	return auth.WithPrincipal(context.Background(), auth.Principal{UserID: playerID})
 }
 
 func validCfg() *pb.CashGameConfig {
