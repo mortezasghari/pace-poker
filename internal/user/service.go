@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	pb "github.com/pacepoker/poker/gen/go/poker/v1"
+	"github.com/pacepoker/poker/internal/auth"
 	"github.com/pacepoker/poker/internal/store"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -79,6 +80,9 @@ func (svc *Service) GetUser(ctx context.Context, req *pb.GetUserRequest) (*pb.Ge
 	if err != nil {
 		return nil, err
 	}
+	if err := requireSelf(ctx, userID); err != nil {
+		return nil, err
+	}
 
 	user, snap, err := svc.store.GetUser(ctx, userID)
 	if err != nil {
@@ -97,6 +101,9 @@ func (svc *Service) GetUser(ctx context.Context, req *pb.GetUserRequest) (*pb.Ge
 func (svc *Service) UpdateUserSettings(ctx context.Context, req *pb.UpdateUserSettingsRequest) (*pb.UpdateUserSettingsResponse, error) {
 	userID, err := parseUserID(req.GetUserId())
 	if err != nil {
+		return nil, err
+	}
+	if err := requireSelf(ctx, userID); err != nil {
 		return nil, err
 	}
 
@@ -119,6 +126,9 @@ func (svc *Service) UpdateUserSettings(ctx context.Context, req *pb.UpdateUserSe
 func (svc *Service) ReportSteps(ctx context.Context, req *pb.ReportStepsRequest) (*pb.ReportStepsResponse, error) {
 	userID, err := parseUserID(req.GetUserId())
 	if err != nil {
+		return nil, err
+	}
+	if err := requireSelf(ctx, userID); err != nil {
 		return nil, err
 	}
 	reportID, err := uuid.Parse(req.GetReportId())
@@ -170,6 +180,9 @@ func (svc *Service) GetUserSnapshot(ctx context.Context, req *pb.GetUserSnapshot
 	if err != nil {
 		return nil, err
 	}
+	if err := requireSelf(ctx, userID); err != nil {
+		return nil, err
+	}
 
 	snap, err := svc.store.GetUserSnapshot(ctx, userID)
 	if err != nil {
@@ -185,6 +198,9 @@ func (svc *Service) GetUserSnapshot(ctx context.Context, req *pb.GetUserSnapshot
 func (svc *Service) ListDepositReports(ctx context.Context, req *pb.ListDepositReportsRequest) (*pb.ListDepositReportsResponse, error) {
 	userID, err := parseUserID(req.GetUserId())
 	if err != nil {
+		return nil, err
+	}
+	if err := requireSelf(ctx, userID); err != nil {
 		return nil, err
 	}
 
@@ -222,6 +238,20 @@ func parseUserID(s string) (uuid.UUID, error) {
 		return uuid.Nil, status.Errorf(codes.InvalidArgument, "invalid user_id: %v", err)
 	}
 	return id, nil
+}
+
+// requireSelf returns PermissionDenied unless the authenticated principal's
+// UserID matches targetID. This enforces that users can only operate on their
+// own account; admin override belongs in a future role-checked path.
+func requireSelf(ctx context.Context, targetID uuid.UUID) error {
+	p, err := auth.FromContext(ctx)
+	if err != nil {
+		return status.Error(codes.Unauthenticated, "unauthenticated")
+	}
+	if p.UserID != targetID {
+		return status.Error(codes.PermissionDenied, "access denied")
+	}
+	return nil
 }
 
 // localDateForUser fetches the user's timezone from the store and returns

@@ -231,7 +231,8 @@ func TestFindEventByCommandID(t *testing.T) {
 	}
 
 	cmdUUID, _ := uuid.Parse(cmdID)
-	found, err := testStore.FindEventByCommandID(ctx, cmdUUID)
+	gameUUID, _ := uuid.Parse(gameID)
+	found, err := testStore.FindEventByCommandID(ctx, cmdUUID, gameUUID)
 	if err != nil {
 		t.Fatalf("FindEventByCommandID: %v", err)
 	}

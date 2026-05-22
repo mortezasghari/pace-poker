@@ -26,7 +26,7 @@ func JoinTable(ctx context.Context, st store.Store, in store.JoinTableInput) (*s
 	err := st.WithTx(ctx, func(tx store.Store) error {
 		// 1. Idempotency: return early if this command was already processed.
 		if in.CommandID != uuid.Nil {
-			existing, err := tx.FindEventByCommandID(ctx, in.CommandID)
+			existing, err := tx.FindEventByCommandID(ctx, in.CommandID, in.GameID)
 			if err != nil && !errors.Is(err, store.ErrNotFound) {
 				return fmt.Errorf("idempotency check: %w", err)
 			}
@@ -132,7 +132,7 @@ func LeaveTable(ctx context.Context, st store.Store, in store.LeaveTableInput) (
 	err := st.WithTx(ctx, func(tx store.Store) error {
 		// 1. Idempotency check.
 		if in.CommandID != uuid.Nil {
-			existing, err := tx.FindEventByCommandID(ctx, in.CommandID)
+			existing, err := tx.FindEventByCommandID(ctx, in.CommandID, in.GameID)
 			if err != nil && !errors.Is(err, store.ErrNotFound) {
 				return fmt.Errorf("idempotency check: %w", err)
 			}

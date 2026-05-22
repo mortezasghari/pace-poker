@@ -114,7 +114,10 @@ type Store interface {
 	AppendEvents(ctx context.Context, evts []*pb.GameEvent) error // single transaction
 	GetEventsForGame(ctx context.Context, gameID uuid.UUID, fromSequence uint64, limit int32) ([]*pb.GameEvent, error)
 	GetLatestSequence(ctx context.Context, gameID uuid.UUID) (uint64, error)
-	FindEventByCommandID(ctx context.Context, commandID uuid.UUID) (*pb.GameEvent, error)
+	FindEventByCommandID(ctx context.Context, commandID uuid.UUID, gameID uuid.UUID) (*pb.GameEvent, error)
+	// FindEventByCommandIDGlobal is used only for pre-creation commands (CreateTable)
+	// where the game_id is not yet known.
+	FindEventByCommandIDGlobal(ctx context.Context, commandID uuid.UUID) (*pb.GameEvent, error)
 
 	// Snapshots
 	CreateSnapshot(ctx context.Context, state *pb.GameState, handNumber int64) error
@@ -412,13 +415,31 @@ func (s *pgStore) GetLatestSequence(ctx context.Context, gameID uuid.UUID) (uint
 	return uint64(seq), nil
 }
 
-func (s *pgStore) FindEventByCommandID(ctx context.Context, commandID uuid.UUID) (*pb.GameEvent, error) {
-	row, err := s.queries.FindEventByCommandID(ctx, uuid.NullUUID{UUID: commandID, Valid: true})
+func (s *pgStore) FindEventByCommandID(ctx context.Context, commandID uuid.UUID, gameID uuid.UUID) (*pb.GameEvent, error) {
+	row, err := s.queries.FindEventByCommandID(ctx, pgstore.FindEventByCommandIDParams{
+		CausedByCommandID: uuid.NullUUID{UUID: commandID, Valid: true},
+		GameID:            gameID,
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("find event by command: %w", err)
+	}
+	var evt pb.GameEvent
+	if err := proto.Unmarshal(row.Envelope, &evt); err != nil {
+		return nil, fmt.Errorf("unmarshal event: %w", err)
+	}
+	return &evt, nil
+}
+
+func (s *pgStore) FindEventByCommandIDGlobal(ctx context.Context, commandID uuid.UUID) (*pb.GameEvent, error) {
+	row, err := s.queries.FindEventByCommandIDGlobal(ctx, uuid.NullUUID{UUID: commandID, Valid: true})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("find event by command (global): %w", err)
 	}
 	var evt pb.GameEvent
 	if err := proto.Unmarshal(row.Envelope, &evt); err != nil {

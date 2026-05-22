@@ -32,8 +32,11 @@ type Querier interface {
 	// Snapshot pruning. Keep N most recent snapshots per game.
 	DeleteSnapshotsBefore(ctx context.Context, arg DeleteSnapshotsBeforeParams) error
 	FindDepositReportByReportID(ctx context.Context, arg FindDepositReportByReportIDParams) (StepDepositReport, error)
-	// Idempotency check: was this command already processed?
-	FindEventByCommandID(ctx context.Context, causedByCommandID uuid.NullUUID) (GameEvent, error)
+	// Idempotency check: was this command already processed for this specific game?
+	FindEventByCommandID(ctx context.Context, arg FindEventByCommandIDParams) (GameEvent, error)
+	// Idempotency check for commands that precede game creation (e.g. CreateTable),
+	// where the game_id is not yet known at idempotency-check time.
+	FindEventByCommandIDGlobal(ctx context.Context, causedByCommandID uuid.NullUUID) (GameEvent, error)
 	// Row-level lock for the deposit transaction.
 	GetDailyStepsForUpdate(ctx context.Context, arg GetDailyStepsForUpdateParams) (UserDailyStep, error)
 	GetEventsForGame(ctx context.Context, arg GetEventsForGameParams) ([]GameEvent, error)

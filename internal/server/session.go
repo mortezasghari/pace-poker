@@ -1,10 +1,14 @@
 package server
 
 import (
+	"errors"
 	"io"
 
 	"github.com/google/uuid"
 	pb "github.com/pacepoker/poker/gen/go/poker/v1"
+	"github.com/pacepoker/poker/internal/engine"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // PlaySession drives the bidi-streaming PlaySession RPC.
@@ -37,6 +41,9 @@ func (s *Server) PlaySession(stream pb.PokerService_PlaySessionServer) error {
 
 		events, err := s.router.Submit(ctx, gameID, actorStr, cmd)
 		if err != nil {
+			if errors.Is(err, engine.ErrInboxFull) {
+				return status.Error(codes.ResourceExhausted, "game session inbox full; retry")
+			}
 			if sendErr := stream.Send(buildRejection(cmd, "INTERNAL", err.Error())); sendErr != nil {
 				return sendErr
 			}

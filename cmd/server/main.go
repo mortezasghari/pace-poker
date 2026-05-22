@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	pb "github.com/pacepoker/poker/gen/go/poker/v1"
@@ -27,9 +28,17 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	pool, err := pgxpool.New(ctx, *dsn)
+	poolCfg, err := pgxpool.ParseConfig(*dsn)
 	if err != nil {
-		log.Fatalf("pgxpool.New: %v", err)
+		log.Fatalf("pgxpool.ParseConfig: %v", err)
+	}
+	poolCfg.MaxConns = 30
+	poolCfg.MinConns = 5
+	poolCfg.MaxConnLifetime = 30 * time.Minute
+	poolCfg.MaxConnIdleTime = 5 * time.Minute
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
+	if err != nil {
+		log.Fatalf("pgxpool.NewWithConfig: %v", err)
 	}
 	defer pool.Close()
 
@@ -44,6 +53,9 @@ func main() {
 	authCfg, err := config.LoadAuth0FromEnv()
 	if err != nil {
 		log.Fatalf("load auth0 config: %v", err)
+	}
+	if authCfg.DevModeAllowStubAuth {
+		log.Printf("WARNING: dev-mode stub auth is enabled — NEVER use in production")
 	}
 	cache, err := auth.NewUserCache(10_000)
 	if err != nil {
@@ -62,6 +74,7 @@ func main() {
 	grpcServer := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(authenticator.UnaryInterceptor()),
 		grpc.ChainStreamInterceptor(authenticator.StreamInterceptor()),
+		grpc.MaxRecvMsgSize(1<<16), // 64 KiB — sufficient for any legitimate game message
 	)
 	pb.RegisterPokerServiceServer(grpcServer, server.NewServer(st, router, authenticator))
 	pb.RegisterUserServiceServer(grpcServer, server.NewUserServer(st))

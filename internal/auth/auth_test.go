@@ -418,7 +418,10 @@ func (f *authFakeStore) GetEventsForGame(_ context.Context, _ uuid.UUID, _ uint6
 func (f *authFakeStore) GetLatestSequence(_ context.Context, _ uuid.UUID) (uint64, error) {
 	panic("authFakeStore: not implemented")
 }
-func (f *authFakeStore) FindEventByCommandID(_ context.Context, _ uuid.UUID) (*pb.GameEvent, error) {
+func (f *authFakeStore) FindEventByCommandID(_ context.Context, _ uuid.UUID, _ uuid.UUID) (*pb.GameEvent, error) {
+	panic("authFakeStore: not implemented")
+}
+func (f *authFakeStore) FindEventByCommandIDGlobal(_ context.Context, _ uuid.UUID) (*pb.GameEvent, error) {
 	panic("authFakeStore: not implemented")
 }
 func (f *authFakeStore) CreateSnapshot(_ context.Context, _ *pb.GameState, _ int64) error {

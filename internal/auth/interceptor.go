@@ -14,9 +14,8 @@ import (
 // PublicMethods lists RPC full-method names that skip authentication.
 // Format: "/<package>.<Service>/<Method>".
 var PublicMethods = map[string]bool{
-	"/grpc.health.v1.Health/Check":                           true,
-	"/grpc.health.v1.Health/Watch":                           true,
-	"/grpc.reflection.v1.ServerReflection/ServerReflectionInfo": true,
+	"/grpc.health.v1.Health/Check": true,
+	"/grpc.health.v1.Health/Watch": true,
 }
 
 // UnaryInterceptor returns a gRPC unary server interceptor that authenticates

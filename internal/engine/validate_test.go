@@ -6,6 +6,7 @@ import (
 	"time"
 
 	pb "github.com/pacepoker/poker/gen/go/poker/v1"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -68,21 +69,9 @@ func newTestState() *pb.GameState {
 	}
 }
 
-// cloneState makes a shallow-enough copy for in-test modifications.
+// cloneState returns a deep copy of s safe for in-test mutation.
 func cloneState(s *pb.GameState) *pb.GameState {
-	c := *s
-	c.Players = make(map[string]*pb.PlayerState, len(s.Players))
-	for k, v := range s.Players {
-		cp := *v
-		c.Players[k] = &cp
-	}
-	if s.CurrentHand != nil {
-		h := *s.CurrentHand
-		c.CurrentHand = &h
-	}
-	cfg := *s.Config
-	c.Config = &cfg
-	return &c
+	return proto.Clone(s).(*pb.GameState)
 }
 
 func withStatus(s *pb.GameState, status pb.GameStatus) *pb.GameState {
@@ -117,33 +106,25 @@ func withNoActor(s *pb.GameState) *pb.GameState {
 
 func withPlayerFolded(s *pb.GameState, id string) *pb.GameState {
 	c := cloneState(s)
-	p := *c.Players[id]
-	p.IsFolded = true
-	c.Players[id] = &p
+	c.Players[id].IsFolded = true
 	return c
 }
 
 func withPlayerAllIn(s *pb.GameState, id string) *pb.GameState {
 	c := cloneState(s)
-	p := *c.Players[id]
-	p.IsAllIn = true
-	c.Players[id] = &p
+	c.Players[id].IsAllIn = true
 	return c
 }
 
 func withPlayerSittingOut(s *pb.GameState, id string) *pb.GameState {
 	c := cloneState(s)
-	p := *c.Players[id]
-	p.IsSittingOut = true
-	c.Players[id] = &p
+	c.Players[id].IsSittingOut = true
 	return c
 }
 
 func withPlayerStack(s *pb.GameState, id string, stack int64) *pb.GameState {
 	c := cloneState(s)
-	p := *c.Players[id]
-	p.Stack = stack
-	c.Players[id] = &p
+	c.Players[id].Stack = stack
 	return c
 }
 
@@ -503,9 +484,7 @@ func TestValidateUseTimeBank(t *testing.T) {
 
 	withTimeBank := func(s *pb.GameState, secs int64) *pb.GameState {
 		c := cloneState(s)
-		p := *c.Players[actorP1]
-		p.TimeBankRemaining = durationpb.New(time.Duration(secs) * time.Second)
-		c.Players[actorP1] = &p
+		c.Players[actorP1].TimeBankRemaining = durationpb.New(time.Duration(secs) * time.Second)
 		return c
 	}
 

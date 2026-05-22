@@ -48,7 +48,7 @@ func (s *Server) CreateTable(ctx context.Context, req *pb.CreateTableCommand) (*
 
 	// Idempotency: if we've already processed this command, return the same result.
 	if cmdID != uuid.Nil {
-		if existing, err := s.store.FindEventByCommandID(ctx, cmdID); err == nil {
+		if existing, err := s.store.FindEventByCommandIDGlobal(ctx, cmdID); err == nil {
 			gameID, _ := uuid.Parse(existing.GetGameId())
 			snap, _, snapErr := s.store.GetLatestSnapshot(ctx, gameID)
 			if snapErr != nil {

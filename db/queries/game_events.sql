@@ -28,7 +28,16 @@ FROM game_events
 WHERE game_id = $1;
 
 -- name: FindEventByCommandID :one
--- Idempotency check: was this command already processed?
+-- Idempotency check: was this command already processed for this specific game?
+SELECT * FROM game_events
+WHERE caused_by_command_id = $1
+  AND game_id = $2
+ORDER BY sequence ASC
+LIMIT 1;
+
+-- name: FindEventByCommandIDGlobal :one
+-- Idempotency check for commands that precede game creation (e.g. CreateTable),
+-- where the game_id is not yet known at idempotency-check time.
 SELECT * FROM game_events
 WHERE caused_by_command_id = $1
 ORDER BY sequence ASC

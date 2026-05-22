@@ -293,7 +293,11 @@ func (f *integFakeStore) WithTx(_ context.Context, _ func(store.Store) error) er
 	return store.ErrNotFound
 }
 
-func (f *integFakeStore) FindEventByCommandID(_ context.Context, _ uuid.UUID) (*pb.GameEvent, error) {
+func (f *integFakeStore) FindEventByCommandID(_ context.Context, _ uuid.UUID, _ uuid.UUID) (*pb.GameEvent, error) {
+	return nil, store.ErrNotFound
+}
+
+func (f *integFakeStore) FindEventByCommandIDGlobal(_ context.Context, _ uuid.UUID) (*pb.GameEvent, error) {
 	return nil, store.ErrNotFound
 }
 

@@ -125,6 +125,8 @@ func (s *Session) Submit(ctx context.Context, actorPlayerID string, cmd *pb.Play
 		return nil, ErrSessionClosed
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	default:
+		return nil, ErrInboxFull
 	}
 
 	select {
@@ -380,7 +382,7 @@ func (s *Session) lookupByCommandID(ctx context.Context, commandID string) ([]*p
 	if err != nil {
 		return nil, nil // malformed → treat as unseen, let handler reject
 	}
-	evt, err := s.store.FindEventByCommandID(ctx, id)
+	evt, err := s.store.FindEventByCommandID(ctx, id, s.gameID)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, nil
 	}

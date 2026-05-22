@@ -80,13 +80,48 @@ type AppendGameEventsParams struct {
 const findEventByCommandID = `-- name: FindEventByCommandID :one
 SELECT id, game_id, sequence, event_type, payload, envelope, caused_by_command_id, hand_id, state_version_after, occurred_at, inserted_at, published_at FROM game_events
 WHERE caused_by_command_id = $1
+  AND game_id = $2
 ORDER BY sequence ASC
 LIMIT 1
 `
 
-// Idempotency check: was this command already processed?
-func (q *Queries) FindEventByCommandID(ctx context.Context, causedByCommandID uuid.NullUUID) (GameEvent, error) {
-	row := q.db.QueryRow(ctx, findEventByCommandID, causedByCommandID)
+type FindEventByCommandIDParams struct {
+	CausedByCommandID uuid.NullUUID
+	GameID            uuid.UUID
+}
+
+// Idempotency check: was this command already processed for this specific game?
+func (q *Queries) FindEventByCommandID(ctx context.Context, arg FindEventByCommandIDParams) (GameEvent, error) {
+	row := q.db.QueryRow(ctx, findEventByCommandID, arg.CausedByCommandID, arg.GameID)
+	var i GameEvent
+	err := row.Scan(
+		&i.ID,
+		&i.GameID,
+		&i.Sequence,
+		&i.EventType,
+		&i.Payload,
+		&i.Envelope,
+		&i.CausedByCommandID,
+		&i.HandID,
+		&i.StateVersionAfter,
+		&i.OccurredAt,
+		&i.InsertedAt,
+		&i.PublishedAt,
+	)
+	return i, err
+}
+
+const findEventByCommandIDGlobal = `-- name: FindEventByCommandIDGlobal :one
+SELECT id, game_id, sequence, event_type, payload, envelope, caused_by_command_id, hand_id, state_version_after, occurred_at, inserted_at, published_at FROM game_events
+WHERE caused_by_command_id = $1
+ORDER BY sequence ASC
+LIMIT 1
+`
+
+// Idempotency check for commands that precede game creation (e.g. CreateTable),
+// where the game_id is not yet known at idempotency-check time.
+func (q *Queries) FindEventByCommandIDGlobal(ctx context.Context, causedByCommandID uuid.NullUUID) (GameEvent, error) {
+	row := q.db.QueryRow(ctx, findEventByCommandIDGlobal, causedByCommandID)
 	var i GameEvent
 	err := row.Scan(
 		&i.ID,

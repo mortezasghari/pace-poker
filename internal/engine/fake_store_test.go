@@ -91,7 +91,16 @@ func (f *fakeStore) AppendEvent(ctx context.Context, evt *pb.GameEvent) error {
 	return f.AppendEvents(ctx, []*pb.GameEvent{evt})
 }
 
-func (f *fakeStore) FindEventByCommandID(ctx context.Context, id uuid.UUID) (*pb.GameEvent, error) {
+func (f *fakeStore) FindEventByCommandID(_ context.Context, id uuid.UUID, _ uuid.UUID) (*pb.GameEvent, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if evt, ok := f.byCommandID[id.String()]; ok {
+		return evt, nil
+	}
+	return nil, store.ErrNotFound
+}
+
+func (f *fakeStore) FindEventByCommandIDGlobal(_ context.Context, id uuid.UUID) (*pb.GameEvent, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if evt, ok := f.byCommandID[id.String()]; ok {

@@ -7,11 +7,18 @@ import (
 
 	"github.com/google/uuid"
 	pb "github.com/pacepoker/poker/gen/go/poker/v1"
+	"github.com/pacepoker/poker/internal/auth"
 	"github.com/pacepoker/poker/internal/store"
 	"github.com/pacepoker/poker/internal/user"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+// ctxAs returns a context carrying a principal for the given user UUID,
+// simulating what the auth interceptor injects for real requests.
+func ctxAs(userID uuid.UUID) context.Context {
+	return auth.WithPrincipal(context.Background(), auth.Principal{UserID: userID})
+}
 
 // ── Fakes ─────────────────────────────────────────────────────────────────────
 
@@ -195,7 +202,10 @@ func (f *fakeStore) GetEventsForGame(_ context.Context, _ uuid.UUID, _ uint64, _
 	return nil, nil
 }
 func (f *fakeStore) GetLatestSequence(_ context.Context, _ uuid.UUID) (uint64, error) { return 0, nil }
-func (f *fakeStore) FindEventByCommandID(_ context.Context, _ uuid.UUID) (*pb.GameEvent, error) {
+func (f *fakeStore) FindEventByCommandID(_ context.Context, _ uuid.UUID, _ uuid.UUID) (*pb.GameEvent, error) {
+	return nil, store.ErrNotFound
+}
+func (f *fakeStore) FindEventByCommandIDGlobal(_ context.Context, _ uuid.UUID) (*pb.GameEvent, error) {
 	return nil, store.ErrNotFound
 }
 func (f *fakeStore) CreateSnapshot(_ context.Context, _ *pb.GameState, _ int64) error { return nil }
@@ -251,7 +261,8 @@ func TestCreateUser_DuplicateExternalIDMapsToAlreadyExists(t *testing.T) {
 
 func TestGetUser_NotFoundMapsToNotFound(t *testing.T) {
 	svc := newSvc(newFakeStore(), fixedClock(2026, 1, 1))
-	_, err := svc.GetUser(context.Background(), &pb.GetUserRequest{UserId: uuid.New().String()})
+	id := uuid.New()
+	_, err := svc.GetUser(ctxAs(id), &pb.GetUserRequest{UserId: id.String()})
 	if s, ok := status.FromError(err); !ok || s.Code() != codes.NotFound {
 		t.Errorf("expected NotFound, got %v", err)
 	}
@@ -271,7 +282,7 @@ func TestReportSteps_InvalidReportID(t *testing.T) {
 	fs.addUser(store.User{ID: id, DisplayName: "Alice", Timezone: "UTC"})
 	svc := newSvc(fs, fixedClock(2026, 5, 20))
 
-	_, err := svc.ReportSteps(context.Background(), &pb.ReportStepsRequest{
+	_, err := svc.ReportSteps(ctxAs(id), &pb.ReportStepsRequest{
 		UserId:               id.String(),
 		ReportId:             "bad-uuid",
 		CumulativeStepsToday: 1000,
@@ -287,7 +298,7 @@ func TestReportSteps_NegativeStepsInvalid(t *testing.T) {
 	fs.addUser(store.User{ID: id, DisplayName: "Alice", Timezone: "UTC"})
 	svc := newSvc(fs, fixedClock(2026, 5, 20))
 
-	_, err := svc.ReportSteps(context.Background(), &pb.ReportStepsRequest{
+	_, err := svc.ReportSteps(ctxAs(id), &pb.ReportStepsRequest{
 		UserId:               id.String(),
 		ReportId:             uuid.New().String(),
 		CumulativeStepsToday: -1,
@@ -306,7 +317,7 @@ func TestReportSteps_TimezoneLocalDate(t *testing.T) {
 	fs.addUser(store.User{ID: id, DisplayName: "Timezone User", Timezone: "Etc/GMT+1"})
 
 	svc := user.NewWithClock(fs, clk)
-	resp, err := svc.ReportSteps(context.Background(), &pb.ReportStepsRequest{
+	resp, err := svc.ReportSteps(ctxAs(id), &pb.ReportStepsRequest{
 		UserId:               id.String(),
 		ReportId:             uuid.New().String(),
 		CumulativeStepsToday: 500,
@@ -329,7 +340,7 @@ func TestListDepositReports_LimitClamping(t *testing.T) {
 	// limit=0 should default to 50; limit=999 should be clamped to 200.
 	// We just verify no error and the response is well-formed.
 	for _, limit := range []int32{0, 999} {
-		resp, err := svc.ListDepositReports(context.Background(), &pb.ListDepositReportsRequest{
+		resp, err := svc.ListDepositReports(ctxAs(id), &pb.ListDepositReportsRequest{
 			UserId: id.String(),
 			Limit:  limit,
 		})
